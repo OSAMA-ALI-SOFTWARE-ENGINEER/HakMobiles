@@ -1,0 +1,1898 @@
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { Link, NavLink, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowLeftRight, BarChart3, Bell, Calendar, CalendarDays, ChevronDown, Eye, EyeOff, Kanban, LayoutDashboard, LogOut, Package, Receipt, ScrollText, Search, Settings, Shield, ShoppingBag, Store, Truck, Wallet, type LucideIcon } from 'lucide-react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { z } from 'zod'
+import { v7 as uuidv7 } from 'uuid'
+import { api, ApiError } from './api'
+import { ActivityScreen, DevicesPanel, RolesPanel } from './admin/AdminScreens'
+import { SettingsScreen } from './admin/SettingsScreen'
+import { Customer360, FollowUps, Pipeline } from './crm/CrmScreens'
+import { CalendarScreen } from './crm/CalendarScreen'
+import { PurchaseScreen } from './purchases/PurchaseScreen'
+import { ReportsScreen } from './reports/ReportsScreen'
+import { SalesScreen } from './sales/SalesScreen'
+import { browserQuery, loadLocal, saveLocal, whenBatchIdle, wipeLocal } from './db/browser'
+import { summarizeTables, type LocalTables, emptyTables } from './data/ledger'
+import { loadGoldenSample, replaceBusinessData } from './data/sample'
+import { centsToEuros, eurosToCents, fxToEurCents } from './shared/money'
+import { hashPin } from './auth/pin'
+import { canAccess, visibleMenu } from './shared/access'
+import { duplicateGroups, duplicateWarning } from './shared/customers'
+import { isValidPortugueseNif } from './shared/nif'
+import { allocationsForPayment, invoiceStandings } from './shared/payments'
+import { editReasonGate, archiveBlock } from './shared/records'
+import { filterProducts } from './shared/products'
+import { lisbonToday } from './shared/sales'
+import { shopLabel } from './shared/labels'
+import { Popup } from './ui/Popup'
+import { ArchiveDialog, RowActions } from './ui/RecordActions'
+import { RecordTable } from './ui/RecordTable'
+import { ArchivedPanel } from './ui/ArchivedPanel'
+import { UndoToast, offerUndo } from './ui/undo'
+import { trackerNotices } from './shared/notices'
+import { customerStatement } from './shared/reports'
+import { purchaseLedgerRows, supplierMoney } from './shared/purchases'
+import { backupName, dashboardView, type DashboardPeriod } from './shared/dashboard'
+import { withoutInlineMedia, shouldKeepLocalMedia } from './shared/photos'
+import { tablesFromWorkbook, tablesToWorkbook } from './shared/trackerImport'
+import { RecordImage } from './ui/RecordImage'
+import { rowFromServer, rowToServer } from './sync/codec'
+import { uploadPendingMedia } from './sync/media'
+
+interface Session {
+  token: string
+  permissions: string[]
+  roles: string[]
+  userName: string
+  email: string
+  phone: string
+  avatarPath: string
+  notifyOverdue: boolean
+  userId: string
+  mustChangePassword: boolean
+  mustSetupTwoFactor: boolean
+  invoicePrefix: string
+  deviceId: string
+}
+
+const sessionKey = 'hak.session'
+const twoFactorEnabled = false
+const pinEnabled = false
+
+const menuIcons: Record<string, LucideIcon> = {
+  Dashboard: LayoutDashboard,
+  Products: Package,
+  Customers: Store,
+  Pipeline: Kanban,
+  'Follow-ups': CalendarDays,
+  Calendar,
+  Suppliers: Truck,
+  Purchases: ShoppingBag,
+  Sales: Receipt,
+  Payments: Wallet,
+  Expenses: Wallet,
+  Transfers: ArrowLeftRight,
+  Reports: BarChart3,
+  Activity: ScrollText,
+  Settings,
+  Admin: Shield,
+}
+
+function statusTone(status: string) {
+  if (status.startsWith('Synced')) return ''
+  if (status.startsWith('Offline') || status.startsWith('Needs')) return 'bad'
+  return 'warn'
+}
+
+function readSession(): Session | null {
+  const raw = localStorage.getItem(sessionKey) ?? sessionStorage.getItem(sessionKey)
+  return raw ? (JSON.parse(raw) as Session) : null
+}
+
+function writeSession(session: Session | null, remember?: boolean) {
+  if (!session) {
+    sessionStorage.removeItem(sessionKey)
+    localStorage.removeItem(sessionKey)
+    return
+  }
+  const persist = remember ?? localStorage.getItem(sessionKey) !== null
+  const keep = persist ? localStorage : sessionStorage
+  const drop = persist ? sessionStorage : localStorage
+  drop.removeItem(sessionKey)
+  keep.setItem(sessionKey, JSON.stringify(session))
+}
+
+async function readTables(): Promise<LocalTables> {
+  const [products, purchases, purchase_lines, sales, sale_lines, stock_adjustments, customer_payments, supplier_payments, expenses, partner_transfers, partners, customers, suppliers, customer_activities, follow_ups, payment_allocations, settings] = await Promise.all([
+    loadLocal('products'),
+    loadLocal('purchases'),
+    loadLocal('purchase_lines'),
+    loadLocal('sales'),
+    loadLocal('sale_lines'),
+    loadLocal('stock_adjustments'),
+    loadLocal('customer_payments'),
+    loadLocal('supplier_payments'),
+    loadLocal('expenses'),
+    loadLocal('partner_transfers'),
+    loadLocal('partners'),
+    loadLocal('customers'),
+    loadLocal('suppliers'),
+    loadLocal('customer_activities'),
+    loadLocal('follow_ups'),
+    loadLocal('payment_allocations'),
+    loadLocal('settings'),
+  ])
+  return { products, purchases, purchase_lines, sales, sale_lines, stock_adjustments, customer_payments, supplier_payments, expenses, partner_transfers, partners, customers, suppliers, customer_activities, follow_ups, payment_allocations, settings }
+}
+
+export default function App() {
+  const [session, setSession] = useState<Session | null>(readSession)
+  const [status, setStatus] = useState('Offline')
+  const [tables, setTables] = useState<LocalTables>(emptyTables())
+  const [notice, setNotice] = useState('')
+  const [unlocked, setUnlocked] = useState(sessionStorage.getItem('hak.unlocked') === 'yes')
+  const [query, setQuery] = useState('')
+  const [newOpen, setNewOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
+  const [noticesOpen, setNoticesOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const navigate = useNavigate()
+
+  async function refresh() {
+    setTables(await readTables())
+    setNotice('')
+  }
+
+  useEffect(() => {
+    refresh().catch(() => setNotice('Local database is still opening.'))
+  }, [])
+
+  useEffect(() => {
+    const closeMenus = (event: MouseEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('.top-actions')) return
+      setNoticesOpen(false)
+      setAccountOpen(false)
+    }
+    document.addEventListener('mousedown', closeMenus)
+    return () => document.removeEventListener('mousedown', closeMenus)
+  }, [])
+
+  useEffect(() => {
+    if (!session?.token || session.email) return
+    let cancelled = false
+    api('/api/auth/me', {}, session.token).then((result) => {
+      if (cancelled) return
+      const user = result.user as { name?: string; email?: string; phone?: string | null; avatar_path?: string | null; notify_overdue?: boolean }
+      const next: Session = {
+        ...session,
+        userName: user.name || session.userName,
+        email: user.email ?? '',
+        phone: user.phone ?? '',
+        avatarPath: user.avatar_path ?? '',
+        notifyOverdue: user.notify_overdue !== false,
+      }
+      writeSession(next)
+      setSession(next)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [session?.userId])
+
+  useEffect(() => {
+    if (!session) return
+    let timer = 0
+    let savedTimer = 0
+    let running = false
+    let queued = false
+    const run = async () => {
+      if (running) {
+        queued = true
+        return
+      }
+        running = true
+        try {
+          await whenBatchIdle()
+          do {
+          queued = false
+          await syncOnce()
+        } while (queued)
+      } finally {
+        running = false
+      }
+    }
+    const syncOnce = async () => {
+      try {
+        await whenBatchIdle()
+        setStatus('Syncing')
+        const rejected: { reason: string }[] = []
+        const pending = new Set<string>()
+        for (;;) {
+          const outbox = await browserQuery<{ op_id: string; table_name: string; record_id: string; payload: string }>('SELECT op_id, table_name, record_id, payload FROM outbox ORDER BY created_at LIMIT 200')
+          if (outbox.length === 0) break
+          for (const row of outbox) pending.add(row.record_id)
+          const pushed = await api('/api/sync/push', {
+            method: 'POST',
+            body: JSON.stringify({
+              ops: outbox.map((row) => ({
+                op_id: row.op_id,
+                table: row.table_name,
+                record_id: row.record_id,
+                payload: rowToServer(row.table_name, withoutInlineMedia(JSON.parse(row.payload) as Record<string, unknown>)),
+              })),
+            }),
+          }, session.token)
+          rejected.push(...((pushed.rejected as { reason: string }[] | undefined) ?? []))
+          const accepted = (pushed.accepted as string[]) ?? []
+          if (accepted.length > 0) {
+            await browserQuery(`DELETE FROM outbox WHERE op_id IN (${accepted.map(() => '?').join(', ')})`, accepted)
+          }
+          if (accepted.length === 0) break
+        }
+        await uploadPendingMedia(session.token)
+        let since = (await browserQuery<{ last_seq: number }>('SELECT last_seq FROM sync_state WHERE id = 1'))[0]?.last_seq ?? 0
+        for (;;) {
+          const pulled = await api(`/api/sync/pull?since=${since}`, {}, session.token)
+          const changes = (pulled.changes as { table: string; record_id: string; data: Record<string, unknown> }[]) ?? []
+          for (const change of changes) {
+            if (pending.has(change.record_id) || !/^[a-z_]+$/.test(change.table)) continue
+            const known = new Set((await browserQuery<{ name: string }>(`PRAGMA table_info(${change.table})`)).map((column) => column.name))
+            const data = Object.fromEntries(Object.entries(rowFromServer(change.table, change.data)).filter(([column]) => known.has(column)))
+            for (const column of ['photo_path', 'receipt_path']) {
+              if (!known.has(column)) continue
+              const existing = await browserQuery<Record<string, unknown>>(`SELECT ${column} FROM ${change.table} WHERE id = ?`, [change.record_id])
+              if (shouldKeepLocalMedia(data[column], existing[0]?.[column])) delete data[column]
+            }
+            const columns = Object.keys(data)
+            if (columns.length === 0) continue
+            const updates = columns.filter((column) => column !== 'id').map((column) => `${column} = excluded.${column}`).join(', ')
+            await browserQuery(
+              `INSERT INTO ${change.table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')}) ON CONFLICT(id) DO UPDATE SET ${updates}`,
+              columns.map((column) => data[column] ?? null),
+            )
+          }
+          since = Number(pulled.last_seq ?? since)
+          await browserQuery('UPDATE sync_state SET last_seq = ? WHERE id = 1', [since])
+          if (!pulled.more) break
+        }
+        await refresh()
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        if (rejected.length > 0) {
+          setStatus('Needs attention')
+          setNotice(`${rejected.length} change${rejected.length === 1 ? '' : 's'} could not be saved on the server. ${rejected[0]?.reason ?? ''}`.trim())
+        } else {
+          setNotice('')
+          setStatus(`Synced ${time}`)
+        }
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.body.status === 'revoked' || error.body.status === 'inactive')) {
+          await wipeLocal()
+          writeSession(null)
+          setSession(null)
+          return
+        }
+        const waiting = await browserQuery('SELECT op_id FROM outbox').catch(() => [])
+        const detail = error instanceof Error ? error.message : 'Sync failed'
+        setNotice(navigator.onLine ? detail : '')
+        setStatus(navigator.onLine ? 'Needs attention' : `Offline with ${waiting.length} waiting`)
+      }
+    }
+    const syncSoon = () => {
+      window.clearTimeout(savedTimer)
+      savedTimer = window.setTimeout(() => void run(), 2000)
+    }
+    window.addEventListener('hak-saved', syncSoon)
+    window.addEventListener('online', run)
+    void run()
+    timer = window.setInterval(() => void run(), 10000)
+    return () => {
+      window.clearInterval(timer)
+      window.clearTimeout(savedTimer)
+      window.removeEventListener('hak-saved', syncSoon)
+      window.removeEventListener('online', run)
+    }
+  }, [session])
+
+  if (!session) return <Login onSuccess={(next, remember) => { writeSession(next, remember); setSession(next) }} />
+  if (session.mustChangePassword) {
+    return <PasswordChange token={session.token} onDone={() => setSession({ ...session, mustChangePassword: false })} />
+  }
+  if (twoFactorEnabled && session.mustSetupTwoFactor) {
+    return <TwoFactor token={session.token} onDone={() => setSession({ ...session, mustSetupTwoFactor: false })} />
+  }
+  if (pinEnabled && !unlocked) return <PinGate onUnlock={() => { sessionStorage.setItem('hak.unlocked', 'yes'); setUnlocked(true) }} onLockout={() => { writeSession(null); setSession(null) }} />
+
+  const summary = summarizeTables(tables)
+  const showProfit = session.roles.includes('Super Admin') || session.permissions.includes('dashboard.view_profit')
+  const today = lisbonToday()
+  const openInvoices = tables.customers.flatMap((customer) => {
+    const statement = customerStatement(tables, String(customer.id), today)
+    return statement.invoices.filter((invoice) => invoice.openCents > 0).map((invoice) => ({ id: invoice.invoiceNo, label: statement.shop, date: invoice.date }))
+  })
+  const showOverdue = session.notifyOverdue !== false
+  const notices = trackerNotices({
+    stock: summary.stock,
+    openInvoices,
+    today,
+    canSeeStock: session.roles.includes('Super Admin') || session.permissions.includes('products.view'),
+    muted: showOverdue ? [] : ['invoice_overdue'],
+  })
+  const saveSession = (next: Session) => {
+    writeSession(next)
+    setSession(next)
+  }
+  const setOverdueNotices = async (show: boolean) => {
+    const result = await api('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ notify_overdue: show }),
+    }, session.token)
+    const user = result.user as { notify_overdue?: boolean }
+    saveSession({ ...session, notifyOverdue: user.notify_overdue !== false })
+  }
+
+  const menu = visibleMenu(session.permissions, session.roles.includes('Super Admin'))
+  const needle = query.trim().toLowerCase()
+  const found = needle === '' ? [] : [
+    ...tables.products.filter((row) => `${row.code} ${row.name}`.toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), label: `${row.code} ${row.name}`, to: `/products?product=${row.id}` })),
+    ...tables.customers.filter((row) => String(row.shop_name ?? '').toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), label: String(row.shop_name), to: `/customers/${row.id}` })),
+    ...tables.sales.filter((row) => String(row.invoice_no ?? '').toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), label: String(row.invoice_no), to: '/sales' })),
+  ].slice(0, 8)
+  const signOut = () => { sessionStorage.removeItem('hak.unlocked'); writeSession(null); setSession(null); setUnlocked(false) }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="mark" aria-hidden="true"><i /><i /></span>
+          <p className="brand-name">HAK Wholesales</p>
+        </div>
+        <p className="menu-label">Menu</p>
+        <nav className="nav">
+          {menu.map((item) => {
+            const Icon = menuIcons[item.label] ?? LayoutDashboard
+            return (
+              <NavLink key={item.path} to={item.path} end={item.path === '/'} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+                <Icon aria-hidden="true" strokeWidth={1.75} />
+                {item.label}
+              </NavLink>
+            )
+          })}
+        </nav>
+      </aside>
+      <div className="workspace">
+        <header className="topbar">
+          <label className="search">
+            <Search aria-hidden="true" size={18} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a product, shop or invoice" aria-label="Find a record" />
+            {found.length > 0 && (
+              <ul className="find-results">
+                {found.map((item) => (
+                  <li key={item.id}><button type="button" role="option" onClick={() => { setQuery(''); navigate(item.to) }}>{item.label}</button></li>
+                ))}
+              </ul>
+            )}
+          </label>
+          <div className="top-actions">
+            <p className={`status ${statusTone(status)}`}><i />{status}{notice ? ` · ${notice}` : ''}</p>
+            <div className="account">
+              <button type="button" className="icon-btn" aria-label="Notifications" aria-expanded={noticesOpen} onClick={() => { setAccountOpen(false); setNoticesOpen((open) => !open) }}>
+                <Bell size={18} />
+                {notices.length > 0 && <span className="count">{notices.length}</span>}
+              </button>
+              {noticesOpen && (
+                <div className="user-menu notice-menu" role="region" aria-label="Notices">
+                  <p className="user-name">Notices</p>
+                  <p className="quiet">Stock warnings and invoices that are past due.</p>
+                  {notices.length === 0 && <p className="quiet">Nothing needs attention.</p>}
+                  {notices.map((item) => <p key={item.id}>{item.text}</p>)}
+                  <label className="check">
+                    <input type="checkbox" checked={showOverdue} onChange={(event) => void setOverdueNotices(event.target.checked)} />
+                    Show overdue invoices
+                  </label>
+                </div>
+              )}
+            </div>
+            <div className="account">
+              <button type="button" className="user-chip" aria-label={`Account, ${session.userName}`} aria-expanded={accountOpen} onClick={() => { setNoticesOpen(false); setAccountOpen((open) => !open) }}>
+                <AccountAvatar session={session} />
+                {session.userName}
+                <ChevronDown size={16} aria-hidden="true" />
+              </button>
+              {accountOpen && (
+                <div className="user-menu" role="region" aria-label="Account">
+                  <p className="user-name">{session.userName}</p>
+                  {session.email && <p className="user-role">{session.email}</p>}
+                  {session.phone && <p className="user-role">{session.phone}</p>}
+                  <p className="user-role">{session.roles.join(' · ')}</p>
+                  <button type="button" className="sign-out" onClick={() => { setAccountOpen(false); setProfileOpen(true) }}>Profile</button>
+                  <button type="button" className="sign-out" onClick={signOut}><LogOut size={16} aria-hidden="true" /> Sign out</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+        <main className="content">
+        <Routes>
+          <Route path="/" element={<Dashboard tables={tables} showProfit={showProfit} onLoadSample={session.roles.includes('Super Admin') ? async () => {
+            await loadGoldenSample(session.token)
+            await refresh()
+          } : undefined} onImport={session.roles.includes('Super Admin') ? async (bytes) => {
+            await replaceBusinessData(session.token, tablesFromWorkbook(bytes))
+            await refresh()
+          } : undefined} />} />
+          <Route path="/products" element={<Guard session={session} path="/products"><Products tables={tables} token={session.token} canManage={session.roles.includes('Super Admin') || session.permissions.includes('products.manage')} canAdjust={session.roles.includes('Super Admin') || session.permissions.includes('stock.adjust')} canSeeCost={session.roles.includes('Super Admin') || session.permissions.includes('products.view_cost')} onSaved={refresh} /></Guard>} />
+          <Route path="/sales" element={<Guard session={session} path="/sales"><SalesScreen tables={tables} prefix={session.invoicePrefix} userId={session.userId} userName={session.userName} isSuperAdmin={session.roles.includes('Super Admin')} canManageSales={session.permissions.includes('sales.manage')} canEditOwn={session.permissions.includes('sales.edit_own')} onSaved={refresh} /></Guard>} />
+          <Route path="/customers" element={<Guard session={session} path="/customers"><SimpleEntry title="Customers" table="customers" fields={['shop_name', 'phone', 'nif', 'credit_limit']} onSaved={refresh} rows={tables.customers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} canMerge={session.roles.includes('Super Admin')} sales={tables.sales} lines={tables.sale_lines} allocations={tables.payment_allocations} payments={tables.customer_payments} /></Guard>} />
+          <Route path="/customers/:id" element={<Guard session={session} path="/customers"><Customer360 tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} onSaved={refresh} /></Guard>} />
+          <Route path="/pipeline" element={<Guard session={session} path="/pipeline"><Pipeline tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} onSaved={refresh} /></Guard>} />
+          <Route path="/follow-ups" element={<Guard session={session} path="/follow-ups"><FollowUps tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} onSaved={refresh} /></Guard>} />
+          <Route path="/calendar" element={<Guard session={session} path="/calendar"><CalendarScreen tables={tables} /></Guard>} />
+          <Route path="/suppliers" element={<Guard session={session} path="/suppliers"><SimpleEntry title="Suppliers" table="suppliers" fields={['name', 'phone', 'country']} onSaved={refresh} rows={tables.suppliers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('suppliers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} balanceOf={(row) => supplierMoney({ supplierId: String(row.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments }).owedCents} detail={(row) => {
+            const money = supplierMoney({ supplierId: String(row.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
+            return `Purchased ${centsToEuros(money.purchasedCents)} · Paid ${centsToEuros(money.paidCents)} · We owe ${centsToEuros(money.owedCents)}`
+          }} previewExtra={(row) => {
+            const orders = purchaseLedgerRows({ purchases: tables.purchases.filter((purchase) => purchase.supplier_id === row.id), lines: tables.purchase_lines })
+            const paid = tables.supplier_payments.filter((payment) => payment.supplier_id === row.id)
+            return (
+              <ul className="record-list">
+                {orders.map((line, index) => <li key={`${line.productId}-${index}`}>Order · {String(tables.products.find((product) => product.id === line.productId)?.code ?? 'Product')} · {line.qty} ordered · {centsToEuros(line.unitCostCents)} landed</li>)}
+                {paid.map((payment) => <li key={String(payment.id)}>Payment · {centsToEuros(Number(payment.amount_eur ?? payment.amount))}</li>)}
+                {orders.length === 0 && paid.length === 0 && <li>No orders or payments</li>}
+              </ul>
+            )
+          }} /></Guard>} />
+          <Route path="/purchases" element={<Guard session={session} path="/purchases"><PurchaseScreen tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('purchases.manage')} onSaved={refresh} /></Guard>} />
+          <Route path="/payments" element={<Guard session={session} path="/payments"><PaymentEntry tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('payments.manage')} canManagePurchases={session.roles.includes('Super Admin') || session.permissions.includes('purchases.manage')} onSaved={refresh} /></Guard>} />
+          <Route path="/expenses" element={<Guard session={session} path="/expenses"><ExpenseEntry tables={tables} token={session.token} canManage={session.roles.includes('Super Admin') || session.permissions.includes('expenses.manage')} onSaved={refresh} /></Guard>} />
+          <Route path="/transfers" element={<Guard session={session} path="/transfers"><TransferEntry tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('transfers.manage')} onSaved={refresh} /></Guard>} />
+          <Route path="/reports" element={<Guard session={session} path="/reports"><ReportsScreen tables={tables} showProfit={showProfit} /></Guard>} />
+          <Route path="/activity" element={<Guard session={session} path="/activity"><ActivityScreen token={session.token} /></Guard>} />
+          <Route path="/settings" element={<Guard session={session} path="/settings"><SettingsScreen tables={tables} onSaved={refresh} /></Guard>} />
+          <Route path="/admin/users" element={<Guard session={session} path="/admin/users"><Admin token={session.token} /></Guard>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+        </main>
+      </div>
+      <nav className="bottom-nav" aria-label="Primary">
+        <NavLink to="/" end>Dashboard</NavLink>
+        <NavLink to="/sales">Sales</NavLink>
+        <button type="button" onClick={() => { setMoreOpen(false); setNewOpen((open) => !open) }}>New</button>
+        <NavLink to="/customers">Customers</NavLink>
+        <button type="button" onClick={() => { setNewOpen(false); setMoreOpen((open) => !open) }}>More</button>
+      </nav>
+      {newOpen && (
+        <div className="bottom-sheet" role="menu" aria-label="New">
+          <Link to="/sales" onClick={() => setNewOpen(false)}>New sale</Link>
+          <Link to="/payments" onClick={() => setNewOpen(false)}>New payment</Link>
+          <Link to="/customers" onClick={() => setNewOpen(false)}>New customer</Link>
+        </div>
+      )}
+      {moreOpen && (
+        <div className="bottom-sheet" aria-label="More">
+          {menu.filter((item) => !['Dashboard', 'Sales', 'Customers'].includes(item.label)).map((item) => (
+            <NavLink key={item.path} to={item.path} onClick={() => setMoreOpen(false)}>{item.label}</NavLink>
+          ))}
+        </div>
+      )}
+      <ProfileDialog session={session} open={profileOpen} onClose={() => setProfileOpen(false)} onSaved={saveSession} />
+      <UndoToast />
+    </div>
+  )
+}
+
+function AccountAvatar({ session }: { session: Session }) {
+  if (session.avatarPath) {
+    return <span className="avatar"><RecordImage path={session.avatarPath} token={session.token} alt="" /></span>
+  }
+  return <span className="avatar">{session.userName.slice(0, 1)}</span>
+}
+
+function ProfileDialog({ session, open, onClose, onSaved }: { session: Session; open: boolean; onClose: () => void; onSaved: (next: Session) => void }) {
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const password = String(form.get('password') ?? '')
+    setSaving(true)
+    setError('')
+    try {
+      if (password) {
+        await api('/api/auth/change-password', {
+          method: 'POST',
+          body: JSON.stringify({ password, password_confirmation: form.get('password_confirmation') }),
+        }, session.token)
+      }
+      const result = await api('/api/auth/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: form.get('name'),
+          email: form.get('email'),
+          phone: String(form.get('phone') ?? '') || null,
+          notify_overdue: form.get('notify_overdue') === 'on',
+        }),
+      }, session.token)
+      const file = form.get('avatar')
+      let avatarPath = session.avatarPath
+      if (file instanceof File && file.size > 0) {
+        const body = new FormData()
+        body.set('table', 'users')
+        body.set('record_id', session.userId)
+        body.set('file', file)
+        const headers = new Headers({ Accept: 'application/json', Authorization: `Bearer ${session.token}` })
+        const response = await fetch('/api/files', { method: 'POST', headers, body })
+        const uploaded = await response.json().catch(() => ({})) as { path?: string; message?: string }
+        if (!response.ok || !uploaded.path) throw new Error(uploaded.message ?? 'The photo could not be saved.')
+        avatarPath = uploaded.path
+      }
+      const user = result.user as { name: string; email: string; phone?: string | null; notify_overdue?: boolean }
+      onSaved({
+        ...session,
+        userName: user.name,
+        email: user.email,
+        phone: user.phone ?? '',
+        avatarPath,
+        notifyOverdue: user.notify_overdue !== false,
+      })
+      onClose()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save your profile.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Popup title="Profile" open={open} onClose={onClose}>
+      <form className="form-grid" onSubmit={(event) => void onSubmit(event)}>
+        <label>Name<input className="control" name="name" aria-label="Name" defaultValue={session.userName} required /></label>
+        <label>Email<input className="control" name="email" type="email" aria-label="Email" defaultValue={session.email} required /></label>
+        <label>Phone<input className="control" name="phone" aria-label="Phone" defaultValue={session.phone} /></label>
+        <label>Photo<input className="control" name="avatar" type="file" accept="image/*" aria-label="Photo" /></label>
+        <label>New password<input className="control" name="password" type="password" aria-label="New password" autoComplete="new-password" minLength={10} /></label>
+        <label>Confirm password<input className="control" name="password_confirmation" type="password" aria-label="Confirm password" autoComplete="new-password" /></label>
+        <label className="check">
+          <input type="checkbox" name="notify_overdue" defaultChecked={session.notifyOverdue !== false} />
+          Show overdue invoices
+        </label>
+        {error && <p className="error">{error}</p>}
+        <button className="btn" type="submit" disabled={saving}>Save profile</button>
+      </form>
+    </Popup>
+  )
+}
+
+function Guard({ session, path, children }: { session: Session; path: string; children: ReactNode }) {
+  if (!canAccess(path, session.permissions, session.roles.includes('Super Admin'))) return <Navigate to="/" replace />
+  return children
+}
+
+function Login({ onSuccess }: { onSuccess: (session: Session, remember: boolean) => void }) {
+  const [error, setError] = useState('')
+  const [otp, setOtp] = useState('')
+  const [needsOtp, setNeedsOtp] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    try {
+      const result = await api('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: form.get('email'),
+          password: form.get('password'),
+          device_name: 'Browser',
+          platform: 'web',
+          app_version: '1.0.0',
+          otp: otp || undefined,
+        }),
+      })
+      const user = result.user as { id: string; name: string; email?: string; phone?: string | null; avatar_path?: string | null; notify_overdue?: boolean; roles: string[] }
+      const device = result.device as { id: string; invoice_prefix: string }
+      onSuccess({
+        token: String(result.token),
+        permissions: result.permissions as string[],
+        roles: user.roles,
+        userName: user.name,
+        email: user.email ?? '',
+        phone: user.phone ?? '',
+        avatarPath: user.avatar_path ?? '',
+        notifyOverdue: user.notify_overdue !== false,
+        userId: user.id,
+        mustChangePassword: Boolean(result.must_change_password),
+        mustSetupTwoFactor: twoFactorEnabled && Boolean(result.must_setup_two_factor),
+        invoicePrefix: device.invoice_prefix,
+        deviceId: device.id,
+      }, form.get('remember') === 'on')
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.body.two_factor_required) {
+        setNeedsOtp(true)
+        setError('Enter the code from your authenticator app.')
+        return
+      }
+      setError(caught instanceof Error ? caught.message : 'Login failed')
+    }
+  }
+
+  return (
+    <div className="gate">
+      <section className="gate-hero">
+        <p className="eyebrow">Lisbon · Wholesale</p>
+        <h2>The counter, kept to the cent.</h2>
+        <p>Stock, balances, and profit are read from the ledger. Nothing on this screen is typed in as a total.</p>
+      </section>
+      <form onSubmit={submit} className="gate-card">
+        <h1>HAK Wholesales</h1>
+        <p className="lede">Sign in on this device. The books stay here first, then sync.</p>
+        <input name="email" type="email" required placeholder="Email" aria-label="Email" className="control" />
+        <div className="secret-field">
+          <input name="password" type={showPassword ? 'text' : 'password'} required placeholder="Password" aria-label="Password" className="control" />
+          <button type="button" className="eye" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword((current) => !current)}>
+            {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
+          </button>
+        </div>
+        {needsOtp && <input value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="Authenticator code" aria-label="Authenticator code" className="control" />}
+        <label className="check"><input name="remember" type="checkbox" /> Remember me</label>
+        {error && <p className="error">{error}</p>}
+        <button className="btn">Log in</button>
+      </form>
+    </div>
+  )
+}
+
+function PasswordChange({ token, onDone }: { token: string; onDone: () => void }) {
+  const [error, setError] = useState('')
+  return (
+    <div className="gate">
+      <section className="gate-hero">
+        <p className="eyebrow">HAK Wholesales</p>
+        <h2>A new password before the books.</h2>
+        <p>This account cannot continue until the temporary password is replaced.</p>
+      </section>
+      <form className="gate-card" onSubmit={async (event) => {
+        event.preventDefault()
+        const form = new FormData(event.currentTarget)
+        try {
+          await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ password: form.get('password'), password_confirmation: form.get('password_confirmation') }) }, token)
+          onDone()
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : 'Could not change password')
+        }
+      }}>
+        <h1>Choose a new password</h1>
+        <input name="password" type="password" minLength={10} required placeholder="New password" aria-label="New password" className="control" />
+        <input name="password_confirmation" type="password" minLength={10} required placeholder="Confirm password" aria-label="Confirm password" className="control" />
+        {error && <p className="error">{error}</p>}
+        <button className="btn">Save password</button>
+      </form>
+    </div>
+  )
+}
+
+function TwoFactor({ token, onDone }: { token: string; onDone: () => void }) {
+  const [secret, setSecret] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    api('/api/auth/two-factor/setup', { method: 'POST' }, token).then((result) => setSecret(String(result.secret))).catch(() => setError('Could not start two-factor setup'))
+  }, [token])
+  return (
+    <div className="gate">
+      <section className="gate-hero">
+        <p className="eyebrow">HAK Wholesales</p>
+        <h2>Two keys for the partners.</h2>
+        <p>Super admins and partners confirm each sign-in with an authenticator code.</p>
+      </section>
+      <form className="gate-card" onSubmit={async (event) => {
+        event.preventDefault()
+        const form = new FormData(event.currentTarget)
+        try {
+          await api('/api/auth/two-factor/confirm', { method: 'POST', body: JSON.stringify({ code: form.get('code') }) }, token)
+          onDone()
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : 'Code was not accepted')
+        }
+      }}>
+        <h1>Set up two-factor login</h1>
+        <p className="lede">Add this secret to your authenticator app, then enter the 6-digit code.</p>
+        <code className="secret" data-testid="totp-secret">{secret}</code>
+        <input name="code" required aria-label="Authenticator code" inputMode="numeric" className="control pin-input" />
+        {error && <p className="error">{error}</p>}
+        <button className="btn">Confirm</button>
+      </form>
+    </div>
+  )
+}
+
+function PinGate({ onUnlock, onLockout }: { onUnlock: () => void; onLockout: () => void }) {
+  const [mode, setMode] = useState<'set' | 'enter'>('enter')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    browserQuery<{ pin_hash: string | null }>('SELECT pin_hash FROM sync_state WHERE id = 1')
+      .then((rows) => setMode(rows[0]?.pin_hash ? 'enter' : 'set'))
+      .catch(() => setError('Open the app online once before using the PIN.'))
+  }, [])
+
+  return (
+    <div className="gate">
+      <section className="gate-hero">
+        <p className="eyebrow">HAK Wholesales</p>
+        <h2>This device stays locked.</h2>
+        <p>The PIN opens the books already stored on this browser. It is not your account password.</p>
+      </section>
+      <form className="gate-card" onSubmit={async (event) => {
+      event.preventDefault()
+      const pin = String(new FormData(event.currentTarget).get('pin') ?? '')
+      if (!/^\d{6}$/.test(pin)) {
+        setError('Use a 6-digit PIN.')
+        return
+      }
+      const rows = await browserQuery<{ pin_hash: string | null; pin_salt: string | null; pin_attempts: number }>('SELECT pin_hash, pin_salt, pin_attempts FROM sync_state WHERE id = 1')
+      const state = rows[0]
+      if (mode === 'set' || !state?.pin_hash) {
+        const salt = crypto.randomUUID()
+        await browserQuery('UPDATE sync_state SET pin_hash = ?, pin_salt = ?, pin_attempts = 0 WHERE id = 1', [await hashPin(pin, salt), salt])
+        onUnlock()
+        return
+      }
+      if ((state.pin_attempts ?? 0) >= 5) {
+        onLockout()
+        return
+      }
+      if ((await hashPin(pin, String(state.pin_salt))) === state.pin_hash) {
+        await browserQuery('UPDATE sync_state SET pin_attempts = 0 WHERE id = 1')
+        onUnlock()
+        return
+      }
+      const attempts = Number(state.pin_attempts ?? 0) + 1
+      await browserQuery('UPDATE sync_state SET pin_attempts = ? WHERE id = 1', [attempts])
+      if (attempts >= 5) onLockout()
+      else setError('Wrong PIN.')
+    }}>
+        <h1>{mode === 'set' ? 'Set a 6-digit PIN' : 'Enter your PIN'}</h1>
+        <input name="pin" inputMode="numeric" maxLength={6} required aria-label="PIN" className="control pin-input" />
+        {error && <p className="error">{error}</p>}
+        <button className="btn">{mode === 'set' ? 'Save PIN' : 'Unlock'}</button>
+      </form>
+    </div>
+  )
+}
+
+function Dashboard({ tables, showProfit, onLoadSample, onImport }: { tables: LocalTables; showProfit: boolean; onLoadSample?: () => Promise<void>; onImport?: (bytes: ArrayBuffer) => Promise<void> }) {
+  const [confirmSample, setConfirmSample] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [restoreFile, setRestoreFile] = useState<File | null>(null)
+  const [backupError, setBackupError] = useState('')
+  const [history, setHistory] = useState<{ at: string; name: string; status: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem('hak.backupHistory') ?? '[]') } catch { return [] }
+  })
+  const [period, setPeriod] = useState<DashboardPeriod>('twelve')
+  const [from, setFrom] = useState(() => `${lisbonToday().slice(0, 7)}-01`)
+  const [to, setTo] = useState(() => lisbonToday())
+  const view = dashboardView(tables, period, lisbonToday(), period === 'custom' ? { start: from, end: to } : undefined)
+  const downloadBackup = () => {
+    const bytes = tablesToWorkbook(tables)
+    let checked = false
+    try { checked = summarizeTables(tablesFromWorkbook(bytes)).revenueCents === summarizeTables(tables).revenueCents } catch { checked = false }
+    if (!checked) { setBackupError('The backup could not be checked.'); return }
+    setBackupError('')
+    const name = backupName(lisbonToday())
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = name
+    link.click()
+    URL.revokeObjectURL(url)
+    const next = [{ at: new Date().toISOString(), name, status: 'Downloaded' }, ...history].slice(0, 12)
+    localStorage.setItem('hak.backupHistory', JSON.stringify(next))
+    setHistory(next)
+  }
+  return (
+    <section className="page insight-page">
+      <div className="page-head">
+        <div>
+          <h1>Dashboard</h1>
+          <p className="lede">Figures below are calculated from purchases, sales, payments, and adjustments.</p>
+        </div>
+        <label className="control-line period-pick">Period
+          <select aria-label="Period" className="control" value={period} onChange={(event) => setPeriod(event.target.value as DashboardPeriod)}>
+            <option value="week">This week</option>
+            <option value="month">This month</option>
+            <option value="quarter">This quarter</option>
+            <option value="year">This year</option>
+            <option value="twelve">Last 12 months</option>
+            <option value="custom">Custom range</option>
+          </select>
+        </label>
+      </div>
+      {period === 'custom' && (
+        <div className="filters">
+          <label className="control-line">From
+            <input aria-label="From" type="date" className="control" value={from} onChange={(event) => setFrom(event.target.value)} />
+          </label>
+          <label className="control-line">To
+            <input aria-label="To" type="date" className="control" value={to} onChange={(event) => setTo(event.target.value)} />
+          </label>
+        </div>
+      )}
+      <Popup title="Load sample data" open={confirmSample} onClose={() => setConfirmSample(false)}>
+        <form className="form-grid" onSubmit={(event) => {
+          event.preventDefault()
+          setConfirmSample(false)
+          if (onLoadSample) void onLoadSample()
+        }}>
+          <p className="lede">This replaces the current business with the sample ledger. Sales become €605.00.</p>
+          <button className="btn-danger">Replace with sample</button>
+        </form>
+      </Popup>
+      <Popup title="Import tracker workbook" open={importFile != null} onClose={() => setImportFile(null)}>
+        <form className="form-grid" onSubmit={(event) => {
+          event.preventDefault()
+          const file = importFile
+          setImportFile(null)
+          if (!file || !onImport) return
+          void file.arrayBuffer().then((bytes) => onImport(bytes)).catch((caught: unknown) => window.alert(caught instanceof Error ? caught.message : 'The tracker file could not be imported.'))
+        }}>
+          <p className="lede">This replaces the current business with the rows in {importFile?.name ?? 'the workbook'}.</p>
+          <button className="btn-danger">Replace with workbook</button>
+        </form>
+      </Popup>
+      <Popup title="Restore backup" open={restoreFile != null} onClose={() => setRestoreFile(null)}>
+        <form className="form-grid" onSubmit={(event) => {
+          event.preventDefault()
+          const file = restoreFile
+          setRestoreFile(null)
+          if (!file || !onImport) return
+          void file.arrayBuffer().then((bytes) => onImport(bytes)).catch((caught: unknown) => window.alert(caught instanceof Error ? caught.message : 'The backup could not be restored.'))
+        }}>
+          <p className="lede">This replaces the current business with {restoreFile?.name ?? 'the backup'}.</p>
+          <button className="btn-danger">Replace with backup</button>
+        </form>
+      </Popup>
+      {backupError && <p className="error">{backupError}</p>}
+      <h2 className="section-label">This period</h2>
+      <div className="metrics">
+        <Card label="Sales" value={centsToEuros(view.revenueCents)} note={`Previous period ${centsToEuros(view.previousRevenueCents)}`} tone="brand" />
+        {showProfit && <Card label="Net profit" value={centsToEuros(view.netProfitCents)} note={`Previous period ${centsToEuros(view.previousNetProfitCents)}`} tone={view.netProfitCents >= 0 ? 'ok' : 'danger'} />}
+        {showProfit && <Card label="Margin" value={`${view.marginPercent}%`} tone="brand" />}
+        {showProfit && <Card label="Expenses" value={centsToEuros(view.expenseCents)} tone="danger" />}
+        {showProfit && <Card label="Cash in" value={centsToEuros(view.cashInCents)} tone="ok" />}
+        {showProfit && <Card label="Cash out" value={centsToEuros(view.cashOutCents)} tone="danger" />}
+        {showProfit && <Card label="Net cash" value={centsToEuros(view.netCashCents)} tone={view.netCashCents >= 0 ? 'ok' : 'danger'} />}
+      </div>
+      <h2 className="section-label">Right now</h2>
+      <div className="metrics">
+        <Card label="Customers owe" value={centsToEuros(view.customersOweCents)} tone={view.customersOweCents > 0 ? 'danger' : 'ok'} />
+        <Card label="We owe suppliers" value={centsToEuros(view.suppliersOweCents)} tone={view.suppliersOweCents > 0 ? 'danger' : 'ok'} />
+        <Card label="Stock value" value={centsToEuros(view.stockValueCents)} tone="brand" />
+        {showProfit && <Card label="Total investment" value={centsToEuros(view.investmentCents)} tone="brand" />}
+      </div>
+      {view.revenueCents === 0 && <p className="quiet">No sales in this period.</p>}
+      <div className="split">
+        {showProfit && (
+          <div className="panel partner-panel">
+            <h2>Partners</h2>
+            <p className="quiet">{view.whoOwesWhom}</p>
+            {view.sharesMessage && <p className="warn">{view.sharesMessage}</p>}
+            <ul className="partner-list">
+              {view.partners.map((partner) => (
+                <li key={partner.id}>{partner.name}: balance {centsToEuros(partner.balanceCents)}, share {centsToEuros(partner.shareCents)} · owns {partner.ownsPercent}% · profit {partner.profitPercent}%</li>
+              ))}
+            </ul>
+            <table className="record-table">
+              <caption className="sr-only">Partner shares</caption>
+              <thead>
+                <tr><th>Partner</th><th>Ownership</th><th>Profit share</th><th>Allocated</th><th>Transfers in</th><th>Transfers out</th></tr>
+              </thead>
+              <tbody>
+                {view.partners.map((partner) => (
+                  <tr key={partner.id}>
+                    <td>{partner.name}</td>
+                    <td>{partner.ownsPercent}%</td>
+                    <td>{partner.profitPercent}%</td>
+                    <td className="num">{centsToEuros(partner.shareCents)}</td>
+                    <td className="num">{centsToEuros(partner.transferInCents)}</td>
+                    <td className="num">{centsToEuros(partner.transferOutCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="panel">
+          <h2>Stock</h2>
+          <ul className="stock-list">{view.stock.map((item) => <li key={item.code} data-status={item.status}>{item.code}: {item.qty} pcs {item.status}</li>)}</ul>
+        </div>
+      </div>
+      <div className="panel chart">
+        <h2>Sales by month</h2>
+        <ResponsiveContainer width="100%" height={220}>
+          <ComposedChart data={view.months} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid vertical={false} stroke="#e0e7ff" />
+            <XAxis dataKey="month" tickLine={false} axisLine={false} />
+            <YAxis tickLine={false} axisLine={false} width={48} />
+            <Tooltip cursor={{ fill: 'rgba(49, 46, 129, 0.08)' }} formatter={(value, name) => name === 'Margin %' ? `${value}%` : `€${Number(value).toFixed(2)}`} />
+            <Legend />
+            <Bar dataKey="sales" name="Sales" fill="#312e81" radius={[6, 6, 0, 0]} barSize={18} isAnimationActive={false} />
+            <Bar dataKey="profit" name="Profit" fill="#059669" radius={[6, 6, 0, 0]} barSize={18} isAnimationActive={false} />
+            <Bar dataKey="expenses" name="Expenses" fill="#b45309" radius={[6, 6, 0, 0]} barSize={18} isAnimationActive={false} />
+            <Line dataKey="margin" name="Margin %" stroke="#0f766e" strokeWidth={2} dot={false} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      {onLoadSample && (
+        <section className="panel data-tools">
+          <h2>Business data</h2>
+          <p className="quiet">Save a copy, or replace the current business. Replacing asks you to confirm first.</p>
+          <div className="tool-row">
+            <button type="button" className="btn-ghost" onClick={downloadBackup}>Download monthly backup</button>
+            <label className="btn-ghost file-btn">Restore backup
+              <input aria-label="Restore backup" className="sr-only" type="file" accept=".xlsx,.xls" onChange={(event) => {
+                const file = event.target.files?.[0] ?? null
+                event.currentTarget.value = ''
+                if (file) setRestoreFile(file)
+              }} />
+            </label>
+            <button type="button" className="btn-ghost" onClick={() => setConfirmSample(true)}>Load sample data</button>
+            {onImport && (
+              <label className="btn-ghost file-btn">Import tracker workbook
+                <input aria-label="Import tracker workbook" className="sr-only" type="file" accept=".xlsx,.xls" onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null
+                  event.currentTarget.value = ''
+                  if (file) setImportFile(file)
+                }} />
+              </label>
+            )}
+          </div>
+          {history.length > 0 && (
+            <ul className="record-list">
+              {history.map((item) => <li key={`${item.at}-${item.name}`}><span>{item.name}</span><span className="quiet">{item.at.slice(0, 10)} · {item.status}</span></li>)}
+            </ul>
+          )}
+        </section>
+      )}
+    </section>
+  )
+}
+
+function Card({ label, value, note, tone }: { label: string; value: string; note?: string; tone: 'brand' | 'ok' | 'danger' }) {
+  return <article className="metric" data-tone={tone}><span>{label}</span><strong className="money">{value}</strong>{note && <small className="quiet">{note}</small>}</article>
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="control-line">{label}{children}</label>
+}
+
+const productSchema = z.object({
+  code: z.string().min(1),
+  name: z.string().min(1),
+  category: z.string().optional(),
+  colour: z.string().optional(),
+  model: z.string().optional(),
+  barcode: z.string().optional(),
+  sellPrice: z.string().min(1),
+  alertLevel: z.string().optional(),
+})
+
+function blankToNull(value?: string) {
+  const trimmed = value?.trim() ?? ''
+  return trimmed === '' ? null : trimmed
+}
+
+function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: { tables: LocalTables; token: string; canManage: boolean; canAdjust: boolean; canSeeCost: boolean; onSaved: () => Promise<void> }) {
+  const summary = summarizeTables(tables)
+  const [params, setParams] = useSearchParams()
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('')
+  const [status, setStatus] = useState('')
+  const [photo, setPhoto] = useState<string | null>(null)
+  const [productOpen, setProductOpen] = useState(false)
+  const [adjustOpen, setAdjustOpen] = useState(false)
+  const [editingId, setEditingId] = useState('')
+  const [previewId, setPreviewId] = useState('')
+  const [archiveId, setArchiveId] = useState('')
+  const [adjustId, setAdjustId] = useState('')
+  const [adjustPreviewId, setAdjustPreviewId] = useState('')
+  const [adjustArchiveId, setAdjustArchiveId] = useState('')
+  const [adjustNote, setAdjustNote] = useState('')
+  const blankProduct = { code: '', name: '', category: '', colour: '', model: '', barcode: '', sellPrice: '', alertLevel: '10' }
+  const form = useForm({ resolver: zodResolver(productSchema), defaultValues: blankProduct })
+  useEffect(() => {
+    const id = params.get('product')
+    if (!id || !tables.products.some((row) => row.id === id)) return
+    setPreviewId(id)
+    setParams({}, { replace: true })
+  }, [params, setParams, tables.products])
+  const categories = [...new Set(tables.products.map((row) => String(row.category ?? '')).filter(Boolean))]
+  const stockByCode = new Map(summary.stock.map((item) => [item.code, item]))
+  const visible = filterProducts(tables.products.map((row) => ({
+    ...row,
+    code: String(row.code),
+    name: String(row.name),
+    category: row.category == null ? null : String(row.category),
+    barcode: row.barcode == null ? null : String(row.barcode),
+  })), summary.stock, query, category, status)
+
+  return (
+    <section className="page">
+      <div className="page-head">
+        <div>
+          <h1>Products</h1>
+          {!canManage && <p className="lede">You can look products up. Adding or pricing them is limited to managers.</p>}
+        </div>
+        <div className="quick-actions">
+          {canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setPhoto(null); form.reset(blankProduct); setProductOpen(true) }}>New product</button>}
+          {canAdjust && <button type="button" className="btn-ghost" onClick={() => { setAdjustId(''); setAdjustNote(''); setAdjustOpen(true) }}>Adjust stock</button>}
+        </div>
+      </div>
+      <div className="filters">
+        <label className="control-line">Find product
+          <input aria-label="Find product" placeholder="Search products" className="control" value={query} onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <label className="control-line">Category
+          <select aria-label="Category" className="control" value={category} onChange={(event) => setCategory(event.target.value)}>
+            <option value="">All categories</option>
+            {categories.map((item) => <option key={item}>{item}</option>)}
+          </select>
+        </label>
+        <label className="control-line">Stock status
+          <select aria-label="Stock status" className="control" value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="">All statuses</option>
+            {['OK', 'LOW', 'OUT', 'CHECK'].map((item) => <option key={item}>{item}</option>)}
+          </select>
+        </label>
+      </div>
+      <RecordTable
+        caption="Products"
+        headers={['Product', 'Status', 'Quantity', 'Money']}
+        rows={visible.map((row) => {
+          const stock = stockByCode.get(String(row.code))
+          const qty = stock?.qty ?? 0
+          const average = qty !== 0 ? Math.round((stock?.valueCents ?? 0) / qty) : 0
+          const status = stock?.status ?? 'OUT'
+          return {
+            key: String(row.id),
+            status,
+            cells: [
+              <span className="cell-main" key="name">
+                <span className="product-name">
+                  {row.photo_path ? <RecordImage path={String(row.photo_path)} token={token} alt={`${row.code} ${row.name}`} /> : null}
+                  <span>{String(row.code)} {String(row.name)}{row.category ? ` · ${row.category}` : ''}</span>
+                </span>
+                <RowActions
+                  canWrite={canManage}
+                  onPreview={() => setPreviewId(String(row.id))}
+                  onEdit={() => {
+                    const source = tables.products.find((item) => item.id === row.id)
+                    if (!source) return
+                    setEditingId(String(source.id))
+                    setPhoto(source.photo_path == null ? null : String(source.photo_path))
+                    form.reset({
+                      code: String(source.code ?? ''),
+                      name: String(source.name ?? ''),
+                      category: String(source.category ?? ''),
+                      colour: String(source.colour ?? ''),
+                      model: String(source.model ?? ''),
+                      barcode: String(source.barcode ?? ''),
+                      sellPrice: String(Number(source.sell_price ?? 0) / 100),
+                      alertLevel: String(source.alert_level ?? 10),
+                    })
+                    setProductOpen(true)
+                  }}
+                  onArchive={() => setArchiveId(String(row.id))}
+                />
+              </span>,
+              status,
+              `${qty} pcs`,
+              canSeeCost && qty !== 0 ? `Average cost ${centsToEuros(average)}` : '—',
+            ],
+          }
+        })}
+      />
+      {canManage && (
+        <Popup title={editingId ? 'Edit product' : 'New product'} open={productOpen} onClose={() => setProductOpen(false)}>
+        <form className="form-grid" onSubmit={form.handleSubmit(async (values) => {
+          const existing = tables.products.find((row) => row.id === editingId)
+          await saveLocal('products', {
+            ...(existing ?? {}),
+            id: editingId || uuidv7(),
+            code: values.code,
+            name: values.name,
+            category: blankToNull(values.category),
+            colour: blankToNull(values.colour),
+            model: blankToNull(values.model),
+            barcode: blankToNull(values.barcode),
+            sell_price: eurosToCents(Number(values.sellPrice)),
+            alert_level: Number(values.alertLevel || 10),
+            photo_path: photo,
+            deleted_at: null,
+          })
+          setPhoto(null)
+          setEditingId('')
+          form.reset(blankProduct)
+          setProductOpen(false)
+          await onSaved()
+        })}>
+          <Field label="Code"><input placeholder="Code" className="control" {...form.register('code')} /></Field>
+          <Field label="Product name"><input placeholder="Name" className="control" {...form.register('name')} /></Field>
+          <Field label="Product category"><input placeholder="Category" className="control" {...form.register('category')} /></Field>
+          <Field label="Colour"><input placeholder="Colour" className="control" {...form.register('colour')} /></Field>
+          <Field label="Model"><input placeholder="Model" className="control" {...form.register('model')} /></Field>
+          <Field label="Barcode"><input placeholder="Barcode" className="control" {...form.register('barcode')} /></Field>
+          <Field label="Selling price"><input placeholder="Selling price" className="control" {...form.register('sellPrice')} /></Field>
+          <Field label="Alert level"><input placeholder="Alert level" className="control" {...form.register('alertLevel')} /></Field>
+          <label className="control-line">Photo
+            <input aria-label="Photo" type="file" accept="image/*" className="control" onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (!file) { setPhoto(null); return }
+              const reader = new FileReader()
+              reader.onload = () => setPhoto(typeof reader.result === 'string' ? reader.result : null)
+              reader.readAsDataURL(file)
+            }} />
+          </label>
+          {photo && <RecordImage path={photo} token={token} alt="Chosen photo" large />}
+          <button className="btn">{editingId ? 'Save changes' : 'Save product'}</button>
+        </form>
+        </Popup>
+      )}
+      <Popup title="Product" open={tables.products.some((row) => row.id === previewId)} onClose={() => setPreviewId('')}>
+        {tables.products.filter((row) => row.id === previewId).map((row) => {
+          const stock = stockByCode.get(String(row.code))
+          return (
+            <div className="form-grid" key={String(row.id)}>
+              {row.photo_path ? <RecordImage path={String(row.photo_path)} token={token} alt={`${row.code} ${row.name}`} large /> : null}
+              <p className="lede">{String(row.code)} {String(row.name)} · {String(row.category ?? 'No category')} · {String(row.colour ?? '')} {String(row.model ?? '')}</p>
+              <p className="lede">Price {centsToEuros(Number(row.sell_price ?? 0))} · Alert {String(row.alert_level ?? 10)} · {stock?.qty ?? 0} pcs {stock?.status ?? 'OUT'}</p>
+              {row.barcode ? <p className="lede">Barcode {String(row.barcode)}</p> : null}
+            </div>
+          )
+        })}
+      </Popup>
+      <ArchiveDialog open={tables.products.some((row) => row.id === archiveId)} title="Archive product" needsReason={false} onClose={() => setArchiveId('')} onConfirm={async () => {
+        const row = tables.products.find((item) => item.id === archiveId)
+        if (!row) return
+        await saveLocal('products', { ...row, deleted_at: new Date().toISOString() })
+        setArchiveId('')
+        offerUndo('Product archived', async () => {
+          await saveLocal('products', { ...row, deleted_at: null })
+          await onSaved()
+        })
+        await onSaved()
+      }} />
+      {canManage && <ArchivedPanel table="products" refreshKey={String(tables.products.length)} label={(row) => `${row.code} ${row.name}`} onRestore={async (row) => {
+        await saveLocal('products', { ...row, deleted_at: null, purged_at: null })
+        await onSaved()
+      }} onChanged={onSaved} />}
+      {canAdjust && (
+        <Popup title={adjustId ? 'Edit adjustment' : 'Adjust stock'} open={adjustOpen} onClose={() => setAdjustOpen(false)}>
+        <form key={adjustId || 'new'} className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          const formElement = event.currentTarget
+          const data = new FormData(formElement)
+          const existing = tables.stock_adjustments.find((row) => row.id === adjustId)
+          const gate = editReasonGate(String(existing?.created_at ?? lisbonToday()), lisbonToday(), adjustNote)
+          if (adjustId && !gate.canSave) return
+          await saveLocal('stock_adjustments', {
+            ...(existing ?? {}),
+            id: adjustId || uuidv7(),
+            product_id: data.get('product_id'),
+            qty: Number(data.get('qty')),
+            reason: data.get('reason'),
+            deleted_at: null,
+          })
+          setAdjustId('')
+          setAdjustOpen(false)
+          await onSaved()
+        }}>
+          <Field label="Product"><select name="product_id" aria-label="Adjustment product" className="control" required defaultValue={String(tables.stock_adjustments.find((row) => row.id === adjustId)?.product_id ?? '')}>
+            {tables.products.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.code)} {String(row.name)}</option>)}
+          </select></Field>
+          <Field label="Quantity change"><input name="qty" type="number" required placeholder="Quantity change" aria-label="Quantity change" className="control" defaultValue={adjustId ? String(tables.stock_adjustments.find((row) => row.id === adjustId)?.qty ?? '') : ''} /></Field>
+          <Field label="Reason"><input name="reason" required placeholder="Reason" aria-label="Reason" className="control" defaultValue={adjustId ? String(tables.stock_adjustments.find((row) => row.id === adjustId)?.reason ?? '') : ''} /></Field>
+          {adjustId && editReasonGate(String(tables.stock_adjustments.find((row) => row.id === adjustId)?.created_at ?? ''), lisbonToday(), adjustNote).needsReason && (
+            <Field label="Change reason"><input aria-label="Change reason" required className="control" value={adjustNote} onChange={(event) => setAdjustNote(event.target.value)} placeholder="Why this older record is changing" /></Field>
+          )}
+          <button className="btn">{adjustId ? 'Save changes' : 'Save adjustment'}</button>
+        </form>
+        </Popup>
+      )}
+      <Popup title="Adjustment" open={tables.stock_adjustments.some((row) => row.id === adjustPreviewId)} onClose={() => setAdjustPreviewId('')}>
+        {tables.stock_adjustments.filter((row) => row.id === adjustPreviewId).map((row) => {
+          const product = tables.products.find((item) => item.id === row.product_id)
+          return <p className="lede" key={String(row.id)}>{String(product?.code ?? 'Product')} {String(product?.name ?? '')} · {String(row.qty)} · {String(row.reason)}</p>
+        })}
+      </Popup>
+      <h2>Adjustments</h2>
+      <ul className="record-list">
+        {tables.stock_adjustments.map((row) => {
+          const product = tables.products.find((item) => item.id === row.product_id)
+          return (
+            <li key={String(row.id)}>
+              <span>{String(product?.code ?? 'Product')} · {String(row.qty)} · {String(row.reason)}</span>
+              <RowActions canWrite={canAdjust} onPreview={() => setAdjustPreviewId(String(row.id))} onEdit={() => { setAdjustId(String(row.id)); setAdjustNote(''); setAdjustOpen(true) }} onArchive={() => setAdjustArchiveId(String(row.id))} />
+            </li>
+          )
+        })}
+      </ul>
+      <ArchiveDialog open={tables.stock_adjustments.some((row) => row.id === adjustArchiveId)} title="Archive adjustment" needsReason={editReasonGate(String(tables.stock_adjustments.find((row) => row.id === adjustArchiveId)?.created_at ?? ''), lisbonToday(), '').needsReason} onClose={() => setAdjustArchiveId('')} onConfirm={async () => {
+        const row = tables.stock_adjustments.find((item) => item.id === adjustArchiveId)
+        if (!row) return
+        await saveLocal('stock_adjustments', { ...row, deleted_at: new Date().toISOString() })
+        setAdjustArchiveId('')
+        offerUndo('Adjustment archived', async () => {
+          await saveLocal('stock_adjustments', { ...row, deleted_at: null })
+          await onSaved()
+        })
+        await onSaved()
+      }} />
+    </section>
+  )
+}
+
+function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, isSuperAdmin = false, canMerge = false, sales = [], lines = [], allocations = [], payments = [], detail, balanceOf, previewExtra }: { title: string; table: string; fields: string[]; rows: Record<string, unknown>[]; onSaved: () => Promise<void>; canManage?: boolean; isSuperAdmin?: boolean; canMerge?: boolean; sales?: Record<string, unknown>[]; lines?: Record<string, unknown>[]; allocations?: Record<string, unknown>[]; payments?: Record<string, unknown>[]; detail?: (row: Record<string, unknown>) => string; balanceOf?: (row: Record<string, unknown>) => number; previewExtra?: (row: Record<string, unknown>) => ReactNode }) {
+  const [error, setError] = useState('')
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [open, setOpen] = useState(false)
+  const [editingId, setEditingId] = useState('')
+  const [previewId, setPreviewId] = useState('')
+  const [archiveId, setArchiveId] = useState('')
+  const action = title === 'Customers' ? 'New customer' : title === 'Suppliers' ? 'New supplier' : `New ${title.toLowerCase()}`
+  const singular = title === 'Customers' ? 'customer' : title === 'Suppliers' ? 'supplier' : title.toLowerCase()
+  const shops = rows.map((row) => ({ id: String(row.id), shop_name: String(row.shop_name ?? row.name ?? ''), nif: row.nif == null ? null : String(row.nif), phone: row.phone == null ? null : String(row.phone) }))
+  const warning = table === 'customers' ? duplicateWarning(shops, { nif: draft.nif, phone: draft.phone }) : ''
+  const groups = table === 'customers' && canMerge ? duplicateGroups(shops) : []
+  const labels = { shop_name: 'Shop name', phone: 'Phone', nif: 'NIF', credit_limit: 'Credit limit', name: 'Name', country: 'Country' } as Record<string, string>
+  const fieldValue = (row: Record<string, unknown>, field: string) => field === 'credit_limit' ? (row.credit_limit == null ? '' : String(Number(row.credit_limit) / 100)) : (row[field] == null ? '' : String(row[field]))
+  const owed = (id: string) => {
+    const row = rows.find((item) => item.id === id)
+    if (balanceOf && row) return balanceOf(row)
+    if (table !== 'customers') return 0
+    return invoiceStandings({
+      sales: sales.map((sale) => ({ id: String(sale.id), invoice_no: String(sale.invoice_no ?? ''), customer_id: String(sale.customer_id), date: sale.date == null ? null : String(sale.date) })),
+      lines: lines.map((line) => ({ sale_id: String(line.sale_id), qty: Number(line.qty), unit_price: Number(line.unit_price), discount: Number(line.discount ?? 0) })),
+      allocations: allocations.map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
+      today: lisbonToday(),
+    }).filter((invoice) => invoice.customerId === id).reduce((sum, invoice) => sum + Math.max(0, invoice.totalCents - invoice.paidCents), 0)
+  }
+  const preview = rows.find((row) => row.id === previewId)
+  return (
+    <section className="page">
+      <div className="page-head"><div><h1>{title}</h1></div>{canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setDraft({}); setError(''); setOpen(true) }}>{action}</button>}</div>
+      <Popup title={editingId ? `Edit ${singular}` : action} open={open} onClose={() => setOpen(false)}>
+      <form className="form-grid" onSubmit={async (event) => {
+        event.preventDefault()
+        const existing = rows.find((item) => item.id === editingId)
+        const row: Record<string, unknown> = { ...(existing ?? {}), id: editingId || uuidv7(), deleted_at: null }
+        for (const field of fields) {
+          const value = draft[field] ?? ''
+          if (field === 'credit_limit') {
+            row[field] = value === '' ? null : eurosToCents(Number(value))
+            continue
+          }
+          row[field] = value === '' && field !== 'shop_name' && field !== 'name' ? null : value
+        }
+        if (table === 'customers' && typeof row.nif === 'string' && row.nif !== '' && !isValidPortugueseNif(row.nif)) {
+          setError('Enter a valid Portuguese NIF (9 digits).')
+          return
+        }
+        try {
+          await saveLocal(table, row)
+          setDraft({})
+          setEditingId('')
+          setError('')
+          setOpen(false)
+          await onSaved()
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : 'Could not save')
+        }
+      }}>
+        {fields.map((field) => {
+          const label = labels[field] ?? field
+          return (
+            <Field key={field} label={label}>
+              <input name={field} aria-label={label} placeholder={label} required={field === 'shop_name' || field === 'name'} className="control" value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
+            </Field>
+          )
+        })}
+        {warning && <p className="warn" role="status">{warning}</p>}
+        {error && <p className="error">{error}</p>}
+        <button className="btn">{editingId ? 'Save changes' : 'Save'}</button>
+      </form>
+      </Popup>
+      <Popup title={singular[0].toUpperCase() + singular.slice(1)} open={preview != null} onClose={() => setPreviewId('')}>
+        {preview && <p className="lede">{fields.map((field) => `${labels[field] ?? field}: ${fieldValue(preview, field) || '—'}`).join(' · ')}{detail ? ` · ${detail(preview)}` : ''}</p>}
+        {preview && previewExtra?.(preview)}
+      </Popup>
+      <ArchiveDialog open={rows.some((row) => row.id === archiveId)} title={`Archive ${singular}`} needsReason={false} onClose={() => setArchiveId('')} onConfirm={async () => {
+        const row = rows.find((item) => item.id === archiveId)
+        if (!row) return
+        await saveLocal(table, { ...row, deleted_at: new Date().toISOString() })
+        setArchiveId('')
+        offerUndo(`${singular[0].toUpperCase()}${singular.slice(1)} archived`, async () => {
+          await saveLocal(table, { ...row, deleted_at: null })
+          await onSaved()
+        })
+        await onSaved()
+      }} />
+      <ArchivedPanel table={table} refreshKey={rows.map((row) => String(row.id)).join(',')} label={(row) => String(row.shop_name ?? row.name ?? 'Record')} onRestore={async (row) => {
+        await saveLocal(table, { ...row, deleted_at: null, purged_at: null })
+        await onSaved()
+      }} onChanged={onSaved} />
+      {error && !open && <p className="error">{error}</p>}
+      <ul className="record-list">{rows.map((row) => {
+        const label = [fields.filter((field) => field !== 'credit_limit').map((field) => String(row[field] ?? '')).filter(Boolean).join(' · '), detail?.(row)].filter(Boolean).join(' · ')
+        return (
+          <li key={String(row.id)}>
+            <span>{label}{table === 'customers' && <Link to={`/customers/${String(row.id)}`}>Open {String(row.shop_name)}</Link>}</span>
+            <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => {
+              setEditingId(String(row.id))
+              setDraft(Object.fromEntries(fields.map((field) => [field, fieldValue(row, field)])))
+              setError('')
+              setOpen(true)
+            }} onArchive={() => {
+              const block = archiveBlock({
+                blocked: owed(String(row.id)) > 0,
+                isSuperAdmin,
+                message: table === 'customers' ? 'This shop still has an open invoice.' : 'We still owe this supplier.',
+              })
+              if (block) { setError(block); return }
+              setError('')
+              setArchiveId(String(row.id))
+            }} />
+          </li>
+        )
+      })}</ul>
+      {groups.length > 0 && (
+        <div className="panel">
+          <h2>Possible duplicates</h2>
+          <ul className="record-list">
+            {groups.map((group) => (
+              <li key={group.key}>
+                {group.customers.map((shop) => shop.shop_name).join(', ')}
+                <button type="button" className="btn-ghost" onClick={async () => {
+                  const [keep, ...others] = group.customers
+                  for (const other of others) {
+                    for (const sale of sales) {
+                      if (sale.customer_id === other.id) await saveLocal('sales', { ...sale, customer_id: keep.id })
+                    }
+                    for (const payment of payments) {
+                      if (payment.customer_id === other.id) await saveLocal('customer_payments', { ...payment, customer_id: keep.id })
+                    }
+                    const row = rows.find((item) => item.id === other.id)
+                    if (row) await saveLocal('customers', { ...row, deleted_at: new Date().toISOString() })
+                  }
+                  await onSaved()
+                }}>Merge into {group.customers[0].shop_name}</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onSaved }: { tables: LocalTables; canManage?: boolean; canManagePurchases?: boolean; onSaved: () => Promise<void> }) {
+  const [customerId, setCustomerId] = useState(() => sessionStorage.getItem('hak.payCustomer') ?? '')
+  const [paySupplierId, setPaySupplierId] = useState(() => sessionStorage.getItem('hak.paySupplier') ?? '')
+  const [open, setOpen] = useState(false)
+  const [kind, setKind] = useState('customer')
+  const [editing, setEditing] = useState<{ table: 'customer_payments' | 'supplier_payments'; id: string } | null>(null)
+  const [amountValue, setAmountValue] = useState('')
+  const [reason, setReason] = useState('')
+  const [warning, setWarning] = useState('')
+  const [preview, setPreview] = useState<{ table: 'customer_payments' | 'supplier_payments'; id: string } | null>(null)
+  const [archive, setArchive] = useState<{ table: 'customer_payments' | 'supplier_payments'; id: string } | null>(null)
+  const [invoiceFilter, setInvoiceFilter] = useState('All')
+  const selectedCustomer = tables.customers.some((row) => row.id === customerId) ? customerId : String(tables.customers[0]?.id ?? '')
+  const selectedSupplier = tables.suppliers.some((row) => row.id === paySupplierId) ? paySupplierId : String(tables.suppliers[0]?.id ?? '')
+  const chooseCustomer = (id: string) => {
+    sessionStorage.setItem('hak.payCustomer', id)
+    setCustomerId(id)
+  }
+  const chooseSupplier = (id: string) => {
+    sessionStorage.setItem('hak.paySupplier', id)
+    setPaySupplierId(id)
+  }
+  const supplierBalance = supplierMoney({ supplierId: selectedSupplier, purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
+  const supplierName = String(tables.suppliers.find((row) => row.id === selectedSupplier)?.name ?? 'Supplier')
+  const today = new Date().toISOString().slice(0, 10)
+  const standings = invoiceStandings({
+    sales: tables.sales.map((row) => ({ id: String(row.id), invoice_no: String(row.invoice_no ?? ''), customer_id: String(row.customer_id), date: row.date == null ? null : String(row.date) })),
+    lines: tables.sale_lines.map((row) => ({ sale_id: String(row.sale_id), qty: Number(row.qty), unit_price: Number(row.unit_price), discount: Number(row.discount ?? 0) })),
+    allocations: tables.payment_allocations.map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
+    today,
+  })
+  const shopName = (id: string) => shopLabel(tables.customers.find((row) => row.id === id)?.shop_name)
+  const visibleInvoices = standings.filter((invoice) => invoiceFilter === 'Overdue' ? invoice.overdue : invoiceFilter === 'All' ? true : invoice.status === invoiceFilter)
+  return (
+    <section className="page">
+      <div className="page-head">
+        <div><h1>Payments</h1><p className="lede">Customer cash is applied to the oldest open invoice first.</p></div>
+        {canManage && <button type="button" className="btn" onClick={() => { setEditing(null); setKind('customer'); setAmountValue(''); setReason(''); setWarning(''); setOpen(true) }}>New payment</button>}
+      </div>
+      <Popup title={editing ? 'Edit payment' : 'New payment'} open={open} onClose={() => setOpen(false)}>
+      <form className="form-grid" onSubmit={async (event) => {
+        event.preventDefault()
+        const form = new FormData(event.currentTarget)
+        const existing = editing?.table === 'supplier_payments'
+          ? tables.supplier_payments.find((row) => row.id === editing.id)
+          : tables.customer_payments.find((row) => row.id === editing?.id)
+        const gate = editReasonGate(String(existing?.created_at ?? lisbonToday()), lisbonToday(), reason)
+        if (editing && !gate.canSave) { setWarning(gate.message); return }
+        const currency = String(form.get('currency') || 'EUR')
+        const amount = eurosToCents(Number(form.get('amount')))
+        const fx = Number(form.get('fx_rate') || 1)
+        if (kind === 'supplier') {
+          const paymentId = editing?.table === 'supplier_payments' ? editing.id : uuidv7()
+          await saveLocal('supplier_payments', { ...(existing ?? {}), id: paymentId, supplier_id: selectedSupplier, paid_by: form.get('paid_by'), amount, currency, fx_rate: String(fx), amount_eur: currency === 'EUR' ? amount : fxToEurCents(amount, fx), method: 'Transfer', deleted_at: null })
+        } else {
+          const paymentId = editing?.table === 'customer_payments' ? editing.id : uuidv7()
+          const previous = tables.payment_allocations.filter((row) => row.customer_payment_id === paymentId)
+          const fresh = invoiceStandings({
+            sales: tables.sales.map((row) => ({ id: String(row.id), invoice_no: String(row.invoice_no ?? ''), customer_id: String(row.customer_id), date: row.date == null ? null : String(row.date) })),
+            lines: tables.sale_lines.map((row) => ({ sale_id: String(row.sale_id), qty: Number(row.qty), unit_price: Number(row.unit_price), discount: Number(row.discount ?? 0) })),
+            allocations: tables.payment_allocations.filter((row) => row.customer_payment_id !== paymentId).map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
+            today,
+          })
+          for (const row of previous) await saveLocal('payment_allocations', { ...row, deleted_at: new Date().toISOString() })
+          await saveLocal('customer_payments', { ...(existing ?? {}), id: paymentId, customer_id: selectedCustomer, received_by: form.get('paid_by'), amount, method: 'Cash', deleted_at: null })
+          const unpaid = fresh.filter((invoice) => invoice.customerId === selectedCustomer && invoice.status !== 'Paid')
+          for (const row of allocationsForPayment(unpaid.map((invoice) => ({ id: invoice.id, date: invoice.date, remainingCents: invoice.totalCents - invoice.paidCents })), amount)) {
+            await saveLocal('payment_allocations', { id: uuidv7(), customer_payment_id: paymentId, sale_id: row.saleId, amount: row.amountCents })
+          }
+        }
+        setEditing(null)
+        setOpen(false)
+        await onSaved()
+      }}>
+        <Field label="Payment type"><select name="kind" aria-label="Payment type" className="control" value={kind} onChange={(event) => setKind(event.target.value)}><option value="customer">Customer payment</option><option value="supplier">Supplier payment</option></select></Field>
+        <Field label="Shop"><select name="customer_id" aria-label="Shop" className="control" value={selectedCustomer} onChange={(event) => chooseCustomer(event.target.value)}>{tables.customers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.shop_name)}</option>)}</select></Field>
+        <p className="lede">Paying {shopName(selectedCustomer)}</p>
+        <Field label="Supplier"><select name="supplier_id" aria-label="Supplier" className="control" value={selectedSupplier} onChange={(event) => chooseSupplier(event.target.value)}>{tables.suppliers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
+        <p className="lede">{supplierName} · We owe {centsToEuros(supplierBalance.owedCents)}</p>
+        <Field label="Recorded by"><select name="paid_by" aria-label="Recorded by" className="control">{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
+        <Field label="Amount"><input name="amount" required placeholder="Amount" aria-label="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
+        <Field label="Currency"><input name="currency" placeholder="Currency" aria-label="Currency" defaultValue="EUR" className="control" /></Field>
+        <Field label="FX rate"><input name="fx_rate" placeholder="FX rate" aria-label="FX rate" defaultValue="1" className="control" /></Field>
+        {editing && editReasonGate(String((editing.table === 'supplier_payments' ? tables.supplier_payments : tables.customer_payments).find((row) => row.id === editing.id)?.created_at ?? ''), lisbonToday(), reason).needsReason && (
+          <label className="control-line">Reason
+            <input aria-label="Change reason" className="control" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why this older record is changing" />
+          </label>
+        )}
+        {warning && <p className="warn">{warning}</p>}
+        <button className="btn">{editing ? 'Save changes' : 'Save payment'}</button>
+      </form>
+      </Popup>
+      <h2>Invoices</h2>
+      <label className="control-line">Invoice status
+        <select aria-label="Invoice status" className="control" value={invoiceFilter} onChange={(event) => setInvoiceFilter(event.target.value)}>
+          {['All', 'Unpaid', 'Part-paid', 'Paid', 'Overdue'].map((item) => <option key={item}>{item}</option>)}
+        </select>
+      </label>
+      <RecordTable
+        caption="Invoices"
+        headers={['Shop', 'Invoice', 'Status', 'Left']}
+        statusColumn={-1}
+        rows={visibleInvoices.map((invoice) => {
+          const left = invoice.totalCents - invoice.paidCents
+          return {
+            key: invoice.id,
+            cells: [shopName(invoice.customerId), invoice.invoiceNo, invoice.overdue ? `${invoice.status} · Overdue` : invoice.status, `${centsToEuros(left)} left`],
+          }
+        })}
+      />
+      <h2>Suppliers</h2>
+      <ul className="record-list">
+        {tables.suppliers.map((supplier) => {
+          const money = supplierMoney({ supplierId: String(supplier.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
+          return <li key={String(supplier.id)}>{String(supplier.name)} · We owe {centsToEuros(money.owedCents)}</li>
+        })}
+      </ul>
+      <h2>Customer payments</h2>
+      <ul className="record-list">
+        {tables.customer_payments.map((row) => (
+          <li key={String(row.id)}>
+            <span>Payment · {shopName(String(row.customer_id))} · {centsToEuros(Number(row.amount))}</span>
+            <RowActions canWrite={canManage} onPreview={() => setPreview({ table: 'customer_payments', id: String(row.id) })} onEdit={() => { setEditing({ table: 'customer_payments', id: String(row.id) }); setKind('customer'); chooseCustomer(String(row.customer_id)); setAmountValue(String(Number(row.amount) / 100)); setReason(''); setOpen(true) }} onArchive={() => setArchive({ table: 'customer_payments', id: String(row.id) })} />
+          </li>
+        ))}
+      </ul>
+      <h2>Supplier payments</h2>
+      <ul className="record-list">
+        {tables.supplier_payments.map((row) => (
+          <li key={String(row.id)}>
+            <span>Payment · {String(tables.suppliers.find((supplier) => supplier.id === row.supplier_id)?.name ?? 'Supplier')} · {centsToEuros(Number(row.amount_eur ?? row.amount))}</span>
+            <RowActions canWrite={canManagePurchases} onPreview={() => setPreview({ table: 'supplier_payments', id: String(row.id) })} onEdit={() => { setEditing({ table: 'supplier_payments', id: String(row.id) }); setKind('supplier'); chooseSupplier(String(row.supplier_id)); setAmountValue(String(Number(row.amount) / 100)); setReason(''); setOpen(true) }} onArchive={() => setArchive({ table: 'supplier_payments', id: String(row.id) })} />
+          </li>
+        ))}
+      </ul>
+      <Popup title="Payment" open={preview != null} onClose={() => setPreview(null)}>
+        {preview?.table === 'customer_payments' && tables.customer_payments.filter((row) => row.id === preview.id).map((row) => {
+          const recorder = String(tables.partners.find((partner) => partner.id === row.received_by)?.name ?? 'Unknown')
+          const invoices = tables.payment_allocations.filter((item) => item.customer_payment_id === row.id)
+          return (
+            <div key={String(row.id)}>
+              <p className="lede">{shopName(String(row.customer_id))} · {centsToEuros(Number(row.amount))} · Recorded by {recorder}</p>
+              <ul className="record-list">
+                {invoices.map((item) => {
+                  const sale = tables.sales.find((entry) => entry.id === item.sale_id)
+                  return <li key={String(item.id)}>{String(sale?.invoice_no ?? 'Invoice')} · {centsToEuros(Number(item.amount))}</li>
+                })}
+                {invoices.length === 0 && <li>No invoices</li>}
+              </ul>
+            </div>
+          )
+        })}
+        {preview?.table === 'supplier_payments' && tables.supplier_payments.filter((row) => row.id === preview.id).map((row) => (
+          <p className="lede" key={String(row.id)}>{String(tables.suppliers.find((supplier) => supplier.id === row.supplier_id)?.name ?? 'Supplier')} · {centsToEuros(Number(row.amount_eur ?? row.amount))} · Recorded by {String(tables.partners.find((partner) => partner.id === row.paid_by)?.name ?? 'Unknown')} · {String(row.currency ?? 'EUR')}</p>
+        ))}
+      </Popup>
+      <ArchiveDialog
+        open={archive != null}
+        title="Archive payment"
+        needsReason={editReasonGate(String((archive?.table === 'supplier_payments' ? tables.supplier_payments : tables.customer_payments).find((row) => row.id === archive?.id)?.created_at ?? ''), lisbonToday(), '').needsReason}
+        onClose={() => setArchive(null)}
+        onConfirm={async () => {
+          if (!archive) return
+          const stamp = new Date().toISOString()
+          if (archive.table === 'customer_payments') {
+            const row = tables.customer_payments.find((item) => item.id === archive.id)
+            const allocations = tables.payment_allocations.filter((item) => item.customer_payment_id === archive.id)
+            if (row) await saveLocal('customer_payments', { ...row, deleted_at: stamp })
+            for (const item of allocations) await saveLocal('payment_allocations', { ...item, deleted_at: stamp })
+            if (row) offerUndo('Payment archived', async () => {
+              await saveLocal('customer_payments', { ...row, deleted_at: null })
+              for (const item of allocations) await saveLocal('payment_allocations', { ...item, deleted_at: null })
+              await onSaved()
+            })
+          } else {
+            const row = tables.supplier_payments.find((item) => item.id === archive.id)
+            if (row) {
+              await saveLocal('supplier_payments', { ...row, deleted_at: stamp })
+              offerUndo('Payment archived', async () => {
+                await saveLocal('supplier_payments', { ...row, deleted_at: null })
+                await onSaved()
+              })
+            }
+          }
+          setArchive(null)
+          await onSaved()
+        }}
+      />
+    </section>
+  )
+}
+
+function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: LocalTables; token: string; canManage?: boolean; onSaved: () => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [editingId, setEditingId] = useState('')
+  const [previewId, setPreviewId] = useState('')
+  const [archiveId, setArchiveId] = useState('')
+  const [category, setCategory] = useState('')
+  const [amountValue, setAmountValue] = useState('')
+  const [paidBy, setPaidBy] = useState('')
+  const [reason, setReason] = useState('')
+  const [warning, setWarning] = useState('')
+  const [receipt, setReceipt] = useState<string | null>(null)
+  const partnerName = (id: unknown) => String(tables.partners.find((row) => row.id === id)?.name ?? 'Partner')
+  const preview = tables.expenses.find((row) => row.id === previewId)
+  const archive = tables.expenses.find((row) => row.id === archiveId)
+  return (
+    <section className="page">
+      <div className="page-head">
+        <div><h1>Expenses</h1><p className="lede">Shop costs come off the profit. They are not stock.</p></div>
+        {canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setCategory(''); setAmountValue(''); setPaidBy(''); setReason(''); setReceipt(null); setOpen(true) }}>New expense</button>}
+      </div>
+      <RecordTable
+        caption="Expenses"
+        headers={['Expense', 'Paid by', 'Amount']}
+        statusColumn={-1}
+        rows={tables.expenses.map((row) => ({
+          key: String(row.id),
+          cells: [
+            <span className="cell-main" key="name">
+              <span className="product-name">
+                {row.receipt_path ? <RecordImage path={String(row.receipt_path)} token={token} alt={String(row.category)} /> : null}
+                <span>{String(row.category)}</span>
+              </span>
+              <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => { setEditingId(String(row.id)); setCategory(String(row.category ?? '')); setAmountValue(String(Number(row.amount) / 100)); setPaidBy(String(row.paid_by ?? '')); setReason(''); setReceipt(row.receipt_path == null ? null : String(row.receipt_path)); setOpen(true) }} onArchive={() => setArchiveId(String(row.id))} />
+            </span>,
+            partnerName(row.paid_by),
+            centsToEuros(Number(row.amount)),
+          ],
+        }))}
+      />
+      <ArchivedPanel table="expenses" refreshKey={tables.expenses.map((row) => String(row.id)).join(',')} label={(row) => String(row.category ?? 'Expense')} onRestore={async (row) => {
+        await saveLocal('expenses', { ...row, deleted_at: null, purged_at: null })
+        await onSaved()
+      }} onChanged={onSaved} />
+      <Popup title={editingId ? 'Edit expense' : 'New expense'} open={open} onClose={() => setOpen(false)}>
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          const existing = tables.expenses.find((row) => row.id === editingId)
+          const gate = editReasonGate(String(existing?.created_at ?? lisbonToday()), lisbonToday(), reason)
+          if (editingId && !gate.canSave) { setWarning(gate.message); return }
+          const form = new FormData(event.currentTarget)
+          const amount = eurosToCents(Number(form.get('amount')))
+          await saveLocal('expenses', { ...(existing ?? {}), id: editingId || uuidv7(), category: form.get('category'), amount, amount_eur: amount, currency: 'EUR', fx_rate: '1', paid_by: form.get('paid_by'), receipt_path: receipt, deleted_at: null })
+          setReceipt(null)
+          setOpen(false)
+          await onSaved()
+        }}>
+          <Field label="Category"><input name="category" required placeholder="Category" className="control" value={category} onChange={(event) => setCategory(event.target.value)} /></Field>
+          <Field label="Amount"><input name="amount" required placeholder="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
+          <Field label="Paid by"><select name="paid_by" aria-label="Paid by" className="control" value={paidBy || String(tables.partners[0]?.id ?? '')} onChange={(event) => setPaidBy(event.target.value)}>{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
+          <label className="control-line">Receipt
+            <input aria-label="Receipt" type="file" accept="image/*" className="control" onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (!file) { setReceipt(null); return }
+              const reader = new FileReader()
+              reader.onload = () => setReceipt(typeof reader.result === 'string' ? reader.result : null)
+              reader.readAsDataURL(file)
+            }} />
+          </label>
+          {receipt && <RecordImage path={receipt} token={token} alt="Receipt" large />}
+          {editingId && editReasonGate(String(tables.expenses.find((row) => row.id === editingId)?.created_at ?? ''), lisbonToday(), reason).needsReason && (
+            <label className="control-line">Reason<input aria-label="Change reason" className="control" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+          )}
+          {warning && <p className="warn">{warning}</p>}
+          <button className="btn">{editingId ? 'Save changes' : 'Save expense'}</button>
+        </form>
+      </Popup>
+      <Popup title="Expense" open={preview != null} onClose={() => setPreviewId('')}>
+        {preview && (
+          <div className="form-grid">
+            {preview.receipt_path ? <RecordImage path={String(preview.receipt_path)} token={token} alt={String(preview.category)} large /> : null}
+            <p className="lede">{String(preview.category)} · {centsToEuros(Number(preview.amount))} · Paid by {partnerName(preview.paid_by)} · {String(preview.created_at ?? '').slice(0, 10)}</p>
+          </div>
+        )}
+      </Popup>
+      <ArchiveDialog open={archive != null} title="Archive expense" needsReason={editReasonGate(String(archive?.created_at ?? ''), lisbonToday(), '').needsReason} onClose={() => setArchiveId('')} onConfirm={async () => {
+        if (!archive) return
+        await saveLocal('expenses', { ...archive, deleted_at: new Date().toISOString() })
+        offerUndo('Expense archived', async () => {
+          await saveLocal('expenses', { ...archive, deleted_at: null })
+          await onSaved()
+        })
+        setArchiveId('')
+        await onSaved()
+      }} />
+    </section>
+  )
+}
+
+function TransferEntry({ tables, canManage = true, onSaved }: { tables: LocalTables; canManage?: boolean; onSaved: () => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [editingId, setEditingId] = useState('')
+  const [previewId, setPreviewId] = useState('')
+  const [archiveId, setArchiveId] = useState('')
+  const [fromId, setFromId] = useState('')
+  const [toId, setToId] = useState('')
+  const [amountValue, setAmountValue] = useState('')
+  const [reason, setReason] = useState('')
+  const [warning, setWarning] = useState('')
+  const nameOf = (id: unknown) => String(tables.partners.find((row) => row.id === id)?.name ?? 'Partner')
+  const preview = tables.partner_transfers.find((row) => row.id === previewId)
+  const archive = tables.partner_transfers.find((row) => row.id === archiveId)
+  return (
+    <section className="page">
+      <div className="page-head">
+        <div><h1>Partner transfers</h1><p className="lede">Money moved between partners. This does not change the profit.</p></div>
+        {canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setFromId(''); setToId(''); setAmountValue(''); setReason(''); setOpen(true) }}>New transfer</button>}
+      </div>
+      <ul className="record-list">
+        {tables.partner_transfers.map((row) => (
+          <li key={String(row.id)}>
+            <span>{nameOf(row.from_partner)} → {nameOf(row.to_partner)} · {centsToEuros(Number(row.amount))}</span>
+            <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => { setEditingId(String(row.id)); setFromId(String(row.from_partner)); setToId(String(row.to_partner)); setAmountValue(String(Number(row.amount) / 100)); setReason(''); setOpen(true) }} onArchive={() => setArchiveId(String(row.id))} />
+          </li>
+        ))}
+      </ul>
+      <Popup title={editingId ? 'Edit transfer' : 'New transfer'} open={open} onClose={() => setOpen(false)}>
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          const form = new FormData(event.currentTarget)
+          if (form.get('from_partner') === form.get('to_partner')) { setWarning('Choose two different partners.'); return }
+          const existing = tables.partner_transfers.find((row) => row.id === editingId)
+          const gate = editReasonGate(String(existing?.created_at ?? lisbonToday()), lisbonToday(), reason)
+          if (editingId && !gate.canSave) { setWarning(gate.message); return }
+          await saveLocal('partner_transfers', { ...(existing ?? {}), id: editingId || uuidv7(), from_partner: form.get('from_partner'), to_partner: form.get('to_partner'), amount: eurosToCents(Number(form.get('amount'))), note: reason || existing?.note || null, deleted_at: null })
+          setOpen(false)
+          await onSaved()
+        }}>
+          <Field label="From"><select name="from_partner" aria-label="From" className="control" value={fromId || String(tables.partners[0]?.id ?? '')} onChange={(event) => setFromId(event.target.value)}>{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
+          <Field label="To"><select name="to_partner" aria-label="To" className="control" value={toId || String(tables.partners[1]?.id ?? tables.partners[0]?.id ?? '')} onChange={(event) => setToId(event.target.value)}>{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
+          <Field label="Amount"><input name="amount" required placeholder="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
+          {editingId && editReasonGate(String(tables.partner_transfers.find((row) => row.id === editingId)?.created_at ?? ''), lisbonToday(), reason).needsReason && (
+            <label className="control-line">Reason<input aria-label="Change reason" className="control" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+          )}
+          {warning && <p className="warn">{warning}</p>}
+          <button className="btn">{editingId ? 'Save changes' : 'Save transfer'}</button>
+        </form>
+      </Popup>
+      <Popup title="Transfer" open={preview != null} onClose={() => setPreviewId('')}>
+        {preview && <p className="lede">{nameOf(preview.from_partner)} to {nameOf(preview.to_partner)} · {centsToEuros(Number(preview.amount))}</p>}
+      </Popup>
+      <ArchiveDialog open={archive != null} title="Archive transfer" needsReason={editReasonGate(String(archive?.created_at ?? ''), lisbonToday(), '').needsReason} onClose={() => setArchiveId('')} onConfirm={async () => {
+        if (!archive) return
+        await saveLocal('partner_transfers', { ...archive, deleted_at: new Date().toISOString() })
+        offerUndo('Transfer archived', async () => {
+          await saveLocal('partner_transfers', { ...archive, deleted_at: null })
+          await onSaved()
+        })
+        setArchiveId('')
+        await onSaved()
+      }} />
+    </section>
+  )
+}
+
+function Admin({ token }: { token: string }) {
+  const [users, setUsers] = useState<Record<string, unknown>[]>([])
+  const [temporary, setTemporary] = useState('')
+  const [tab, setTab] = useState<'Users' | 'Roles' | 'Devices'>('Users')
+  const [open, setOpen] = useState(false)
+  const [roleUser, setRoleUser] = useState<Record<string, unknown> | null>(null)
+  const [deactivateUser, setDeactivateUser] = useState<Record<string, unknown> | null>(null)
+  const [purgeUser, setPurgeUser] = useState<Record<string, unknown> | null>(null)
+  const [archiveOpen, setArchiveOpen] = useState(false)
+  const [userError, setUserError] = useState('')
+  const [userQuery, setUserQuery] = useState('')
+  const navigate = useNavigate()
+  useEffect(() => {
+    api('/api/users', {}, token).then((result) => setUsers((result.data as Record<string, unknown>[]) ?? [])).catch(() => navigate('/'))
+  }, [token, navigate])
+  return (
+    <section className="page">
+      <div className="tabs">
+        {(['Users', 'Roles', 'Devices'] as const).map((name) => (
+          <button key={name} type="button" className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>{name}</button>
+        ))}
+      </div>
+      {tab === 'Roles' && <RolesPanel token={token} />}
+      {tab === 'Devices' && <DevicesPanel token={token} />}
+      {tab === 'Users' && <>
+      <div className="page-head"><div><h1>Users</h1><p className="lede">New logins start with a temporary password that must be changed.</p></div><button type="button" className="btn" onClick={() => setOpen(true)}>New login</button></div>
+      <label className="control-line">Find login
+        <input aria-label="Find login" placeholder="Search logins" className="control" value={userQuery} onChange={(event) => setUserQuery(event.target.value)} />
+      </label>
+      <Popup title="New login" open={open} onClose={() => setOpen(false)}>
+      <form className="form-grid" onSubmit={async (event) => {
+        event.preventDefault()
+        const form = new FormData(event.currentTarget)
+        const result = await api('/api/users', { method: 'POST', body: JSON.stringify({ name: form.get('name'), email: form.get('email'), role: form.get('role') }) }, token)
+        setTemporary(String(result.temporary_password ?? ''))
+        if (result.user && typeof result.user === 'object') setUsers((current) => [...current, result.user as Record<string, unknown>])
+        setOpen(false)
+      }}>
+        <label className="control-line">Name
+          <input name="name" required placeholder="Name" aria-label="Name" className="control" />
+        </label>
+        <label className="control-line">Email
+          <input name="email" type="email" required placeholder="Email" aria-label="Email" className="control" />
+        </label>
+        <label className="control-line">Role
+          <select name="role" aria-label="Role" className="control"><option>Salesperson</option><option>Manager</option><option>Partner</option><option>Viewer</option></select>
+        </label>
+        <button className="btn">Create login</button>
+      </form>
+      </Popup>
+      {temporary && <p className="banner">Temporary password: <button onClick={() => void navigator.clipboard.writeText(temporary)}>{temporary}</button></p>}
+      {userError && <p className="warn">{userError}</p>}
+      <ul className="record-list" aria-label="Active logins">{users.filter((user) => user.is_active !== false && `${user.name} ${user.email}`.toLowerCase().includes(userQuery.trim().toLowerCase())).map((user) => {
+        const roles = Array.isArray(user.roles) ? user.roles.map(String) : []
+        const activeSuperAdmins = users.filter((row) => row.is_active !== false && Array.isArray(row.roles) && row.roles.map(String).includes('Super Admin')).length
+        const lastSuperAdmin = roles.includes('Super Admin') && activeSuperAdmins <= 1
+        return (
+          <li key={String(user.id)}>
+            <span>{String(user.name)}</span>
+            <span className="quiet">{String(user.email)}{roles.length ? ` · ${roles.join(', ')}` : ''}</span>
+            <RowActions
+              canWrite={false}
+              extra={[
+                { label: 'Change role', onSelect: () => { setUserError(''); setRoleUser(user) } },
+                { label: 'Reset password', onSelect: () => {
+                  setUserError('')
+                  void api(`/api/users/${String(user.id)}/reset-password`, { method: 'POST' }, token).then((result) => setTemporary(String(result.temporary_password ?? ''))).catch((caught: unknown) => setUserError(caught instanceof ApiError ? caught.message : 'Could not reset the password.'))
+                } },
+                ...(!lastSuperAdmin ? [{ label: 'Deactivate', danger: true, onSelect: () => { setUserError(''); setDeactivateUser(user) } }] : []),
+              ]}
+            />
+          </li>
+        )
+      })}</ul>
+      <div>
+        <button type="button" className="btn-ghost" aria-pressed={archiveOpen} onClick={() => setArchiveOpen((value) => !value)}>Archived</button>
+        {archiveOpen && (
+          <ul className="record-list" aria-label="Archived logins">
+            {users.filter((user) => user.is_active === false && `${user.name} ${user.email}`.toLowerCase().includes(userQuery.trim().toLowerCase())).length === 0 && <li>Nothing archived</li>}
+            {users.filter((user) => user.is_active === false && `${user.name} ${user.email}`.toLowerCase().includes(userQuery.trim().toLowerCase())).map((user) => {
+              const roles = Array.isArray(user.roles) ? user.roles.map(String) : []
+              return (
+                <li key={String(user.id)}>
+                  <span>{String(user.name)}</span>
+                  <span className="quiet">{String(user.email)}{roles.length ? ` · ${roles.join(', ')}` : ''}</span>
+                  <span className="quick-actions">
+                    <button type="button" className="btn-ok" onClick={() => {
+                      setUserError('')
+                      void api(`/api/users/${String(user.id)}/reactivate`, { method: 'POST' }, token)
+                        .then(() => setUsers((current) => current.map((row) => row.id === user.id ? { ...row, is_active: true } : row)))
+                        .catch((caught: unknown) => setUserError(caught instanceof ApiError ? caught.message : 'Could not reactivate this login.'))
+                    }}>Reactivate</button>
+                    <button type="button" className="btn-danger" onClick={() => { setUserError(''); setPurgeUser(user) }}>Delete permanently</button>
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+      <Popup title="Change role" open={roleUser != null} onClose={() => setRoleUser(null)}>
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          if (!roleUser) return
+          const role = String(new FormData(event.currentTarget).get('role') ?? '')
+          try {
+            const result = await api(`/api/users/${String(roleUser.id)}`, { method: 'PATCH', body: JSON.stringify({ role }) }, token)
+            const next = result.user
+            if (next && typeof next === 'object') setUsers((current) => current.map((row) => row.id === roleUser.id ? next as Record<string, unknown> : row))
+            setRoleUser(null)
+          } catch (caught) {
+            setUserError(caught instanceof ApiError ? caught.message : 'Could not change the role.')
+          }
+        }}>
+          <label className="control-line">Role
+            <select name="role" aria-label="Role" className="control" defaultValue={Array.isArray(roleUser?.roles) ? String(roleUser.roles[0] ?? 'Salesperson') : 'Salesperson'}>
+              <option>Super Admin</option><option>Partner</option><option>Manager</option><option>Salesperson</option><option>Viewer</option>
+            </select>
+          </label>
+          {userError && <p className="warn">{userError}</p>}
+          <button className="btn">Save role</button>
+        </form>
+      </Popup>
+      <Popup title="Deactivate login" open={deactivateUser != null} onClose={() => setDeactivateUser(null)}>
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          if (!deactivateUser) return
+          try {
+            await api(`/api/users/${String(deactivateUser.id)}/deactivate`, { method: 'POST' }, token)
+            setUsers((current) => current.map((row) => row.id === deactivateUser.id ? { ...row, is_active: false } : row))
+            setArchiveOpen(true)
+            setDeactivateUser(null)
+          } catch (caught) {
+            setUserError(caught instanceof ApiError ? caught.message : 'Could not deactivate this login.')
+          }
+        }}>
+          <p className="lede">{String(deactivateUser?.name ?? 'This person')} moves to Archived and can no longer sign in. Their sales stay in their name. You can reactivate the login later.</p>
+          {userError && <p className="warn">{userError}</p>}
+          <button className="btn-danger">Deactivate</button>
+        </form>
+      </Popup>
+      <Popup title="Delete permanently" open={purgeUser != null} onClose={() => setPurgeUser(null)}>
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          if (!purgeUser) return
+          try {
+            await api(`/api/users/${String(purgeUser.id)}`, { method: 'DELETE' }, token)
+            setUsers((current) => current.filter((row) => row.id !== purgeUser.id))
+            setPurgeUser(null)
+          } catch (caught) {
+            setUserError(caught instanceof ApiError ? caught.message : 'Could not delete this login.')
+          }
+        }}>
+          <p className="lede">{String(purgeUser?.name ?? 'This login')} cannot be restored. The email address can be used again. Sales already recorded stay in the books.</p>
+          {userError && <p className="warn">{userError}</p>}
+          <button className="btn-danger">Delete permanently</button>
+        </form>
+      </Popup>
+      </>}
+    </section>
+  )
+}

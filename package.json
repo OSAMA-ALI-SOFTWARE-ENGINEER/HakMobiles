@@ -1,0 +1,12 @@
+{
+  "name": "hak-wholesales-tracker",
+  "private": true,
+  "scripts": {
+    "dev:api": "php api/artisan serve",
+    "dev:app": "npm run dev --prefix app",
+    "test": "php api/artisan test && npm test --prefix app",
+    "test:e2e": "npm exec --prefix app -- playwright test --workers=1",
+    "test:all": "php api/artisan test && npm test --prefix app && npm run test:e2e",
+    "build": "npm run build --prefix app"
+  }
+}

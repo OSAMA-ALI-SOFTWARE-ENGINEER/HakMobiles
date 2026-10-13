@@ -1,0 +1,13 @@
+---
+description: HAK Wholesales Tracker project rules
+alwaysApply: true
+---
+- Stack: Laravel API in /api (current install is Laravel 13 on PHP 8.3); React 19 + TypeScript + Vite in /app; Electron in /desktop; shared calculation code in /app/src/shared.
+- Read docs/PRD.md before changing behaviour. Never invent features that are not in it.
+- All business IDs are UUID v7 strings created on the client. Never use auto-increment IDs for business tables.
+- Stock, balances and profit are always calculated from ledger rows, never stored.
+- Never hard-delete business records: set deleted_at.
+- Every API route needs auth:sanctum plus a permission check, except /api/health and /api/auth/login. Add a Pest test for allowed and forbidden roles.
+- Every money value is DECIMAL(12,2) in MySQL and handled in cents in TypeScript.
+- Write tests with every change: Pest for /api, Vitest for /app logic.
+- Keep components small; forms use React Hook Form + Zod where they collect typed input.
