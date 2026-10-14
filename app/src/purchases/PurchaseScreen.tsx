@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { v7 as uuidv7 } from 'uuid'
 import { loadArchived, saveLocal } from '../db/browser'
 import type { LocalTables } from '../data/ledger'
-import { centsToEuros, parseEuros } from '../shared/money'
+import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
 import { landedUnitCosts, onOrderQty, purchaseLedgerRows, purchaseStatus, supplierMoney } from '../shared/purchases'
 import { editReasonGate } from '../shared/records'
 import { lisbonToday } from '../shared/sales'
@@ -83,15 +83,15 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
     const [first, ...rest] = lines
     chooseSupplier(String(purchase.supplier_id))
     setOrderDate(String(purchase.date ?? today).slice(0, 10))
-    setShipping(Number(purchase.extra_cost ?? 0) === 0 ? '' : String(Number(purchase.extra_cost) / 100))
+    setShipping(Number(purchase.extra_cost ?? 0) === 0 ? '' : centsToInput(Number(purchase.extra_cost)))
     setProductId(first ? String(first.product_id) : '')
     setQty(first ? String(first.qty) : '')
-    setCost(first ? String(Number(first.unit_cost) / 100) : '')
+    setCost(first ? centsToInput(Number(first.unit_cost)) : '')
     setReceived(first && first.qty_received != null && first.qty_received !== '' ? String(first.qty_received) : '')
     setExtras(rest.map((line) => ({
       productId: String(line.product_id),
       qty: String(line.qty),
-      cost: String(Number(line.unit_cost) / 100),
+      cost: centsToInput(Number(line.unit_cost)),
       received: line.qty_received == null || line.qty_received === '' ? '' : String(line.qty_received),
     })))
     setEditingId(String(purchase.id))

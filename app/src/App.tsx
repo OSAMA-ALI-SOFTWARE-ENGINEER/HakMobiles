@@ -17,7 +17,7 @@ import { SalesScreen } from './sales/SalesScreen'
 import { browserQuery, loadLocal, saveLocal, whenBatchIdle, wipeLocal } from './db/browser'
 import { summarizeTables, type LocalTables, emptyTables } from './data/ledger'
 import { loadGoldenSample, replaceBusinessData } from './data/sample'
-import { centsToEuros, eurosToCents, fxToEurCents } from './shared/money'
+import { centsToEuros, centsToInput, fxToEurCents, parseEuros } from './shared/money'
 import { hashPin } from './auth/pin'
 import { canAccess, visibleMenu } from './shared/access'
 import { duplicateGroups, duplicateWarning } from './shared/customers'
@@ -980,6 +980,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
   const [adjustPreviewId, setAdjustPreviewId] = useState('')
   const [adjustArchiveId, setAdjustArchiveId] = useState('')
   const [adjustNote, setAdjustNote] = useState('')
+  const [formError, setFormError] = useState('')
   const blankProduct = { code: '', name: '', category: '', colour: '', model: '', barcode: '', sellPrice: '', alertLevel: '10' }
   const form = useForm({ resolver: zodResolver(productSchema), defaultValues: blankProduct })
   useEffect(() => {
@@ -1069,7 +1070,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
                       colour: String(source.colour ?? ''),
                       model: String(source.model ?? ''),
                       barcode: String(source.barcode ?? ''),
-                      sellPrice: String(Number(source.sell_price ?? 0) / 100),
+                      sellPrice: centsToInput(Number(source.sell_price ?? 0)),
                       alertLevel: String(source.alert_level ?? 10),
                     })
                     setProductOpen(true)
@@ -1087,7 +1088,13 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
       {canManage && (
         <Popup title={editingId ? 'Edit product' : 'New product'} open={productOpen} onClose={() => setProductOpen(false)}>
         <form className="form-grid" onSubmit={form.handleSubmit(async (values) => {
+          const sellPrice = parseEuros(values.sellPrice)
+          if (sellPrice == null) {
+            setFormError('Enter the selling price in euros, for example 8,50.')
+            return
+          }
           const existing = tables.products.find((row) => row.id === editingId)
+          try {
           await saveLocal('products', {
             ...(existing ?? {}),
             id: editingId || uuidv7(),
@@ -1097,11 +1104,16 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
             colour: blankToNull(values.colour),
             model: blankToNull(values.model),
             barcode: blankToNull(values.barcode),
-            sell_price: eurosToCents(Number(values.sellPrice)),
+            sell_price: sellPrice,
             alert_level: Number(values.alertLevel || 10),
             photo_path: photo,
             deleted_at: null,
           })
+          } catch (caught) {
+            setFormError(caught instanceof Error ? caught.message : 'Could not save this product.')
+            return
+          }
+          setFormError('')
           setPhoto(null)
           setEditingId('')
           form.reset(blankProduct)
@@ -1128,6 +1140,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
             }} />
           </label>
           {photo && <RecordImage path={photo} token={token} alt="Chosen photo" large />}
+          {formError && <p className="error">{formError}</p>}
           <button className="btn">{editingId ? 'Save changes' : 'Save product'}</button>
         </form>
         </Popup>
@@ -1248,7 +1261,7 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
     setParams({}, { replace: true })
   }, [params, setParams])
   const labels = { shop_name: 'Shop name', phone: 'Phone', nif: 'NIF', city: 'City', email: 'Email', address: 'Address', credit_limit: 'Credit limit (EUR)', name: 'Name', country: 'Country' } as Record<string, string>
-  const fieldValue = (row: Record<string, unknown>, field: string) => field === 'credit_limit' ? (row.credit_limit == null ? '' : String(Number(row.credit_limit) / 100)) : (row[field] == null ? '' : String(row[field]))
+  const fieldValue = (row: Record<string, unknown>, field: string) => field === 'credit_limit' ? (row.credit_limit == null || row.credit_limit === '' ? '' : centsToInput(Number(row.credit_limit))) : (row[field] == null ? '' : String(row[field]))
   const owed = (id: string) => {
     const row = rows.find((item) => item.id === id)
     if (balanceOf && row) return balanceOf(row)
@@ -1272,7 +1285,10 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
         for (const field of fields) {
           const value = draft[field] ?? ''
           if (field === 'credit_limit') {
-            row[field] = value === '' ? null : eurosToCents(Number(value))
+            if (value.trim() === '') { row[field] = null; continue }
+            const cents = parseEuros(value)
+            if (cents == null) { setError('Enter the credit limit in euros, for example 50,00.'); return }
+            row[field] = cents
             continue
           }
           row[field] = value === '' && field !== 'shop_name' && field !== 'name' ? null : value
@@ -1467,8 +1483,10 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
         const gate = editReasonGate(String(existing?.created_at ?? lisbonToday()), lisbonToday(), reason)
         if (editing && !gate.canSave) { setWarning(gate.message); return }
         const currency = String(form.get('currency') || 'EUR')
-        const amount = eurosToCents(Number(form.get('amount')))
+        const amount = parseEuros(String(form.get('amount') ?? ''))
+        if (amount == null) { setWarning('Enter the amount in euros, for example 10,00.'); return }
         const fx = Number(form.get('fx_rate') || 1)
+        try {
         if (kind === 'supplier') {
           const paymentId = editing?.table === 'supplier_payments' ? editing.id : uuidv7()
           await saveLocal('supplier_payments', { ...(existing ?? {}), id: paymentId, supplier_id: selectedSupplier, paid_by: form.get('paid_by'), amount, currency, fx_rate: String(fx), amount_eur: currency === 'EUR' ? amount : fxToEurCents(amount, fx), method: String(form.get('method') || 'Bank Transfer'), deleted_at: null })
@@ -1488,6 +1506,10 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
           for (const row of allocationsForPayment(unpaid.map((invoice) => ({ id: invoice.id, date: invoice.date, remainingCents: invoice.totalCents - invoice.paidCents })), amount)) {
             await saveLocal('payment_allocations', { id: uuidv7(), customer_payment_id: paymentId, sale_id: row.saleId, amount: row.amountCents })
           }
+        }
+        } catch (caught) {
+          setWarning(caught instanceof Error ? caught.message : 'Could not save this payment.')
+          return
         }
         setEditing(null)
         setOpen(false)
@@ -1542,7 +1564,7 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
         {tables.customer_payments.map((row) => (
           <li key={String(row.id)}>
             <span>Payment · {shopName(String(row.customer_id))} · {centsToEuros(Number(row.amount))}</span>
-            <RowActions canWrite={canManage} onPreview={() => setPreview({ table: 'customer_payments', id: String(row.id) })} onEdit={() => { setEditing({ table: 'customer_payments', id: String(row.id) }); setKind('customer'); chooseCustomer(String(row.customer_id)); setAmountValue(String(Number(row.amount) / 100)); setReason(''); setOpen(true) }} onArchive={() => setArchive({ table: 'customer_payments', id: String(row.id) })} />
+            <RowActions canWrite={canManage} onPreview={() => setPreview({ table: 'customer_payments', id: String(row.id) })} onEdit={() => { setEditing({ table: 'customer_payments', id: String(row.id) }); setKind('customer'); chooseCustomer(String(row.customer_id)); setAmountValue(centsToInput(Number(row.amount))); setReason(''); setOpen(true) }} onArchive={() => setArchive({ table: 'customer_payments', id: String(row.id) })} />
           </li>
         ))}
       </ul>}
@@ -1551,7 +1573,7 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
         {tables.supplier_payments.map((row) => (
           <li key={String(row.id)}>
             <span>Payment · {String(tables.suppliers.find((supplier) => supplier.id === row.supplier_id)?.name ?? 'Supplier')} · {centsToEuros(Number(row.amount_eur ?? row.amount))}</span>
-            <RowActions canWrite={canManagePurchases} onPreview={() => setPreview({ table: 'supplier_payments', id: String(row.id) })} onEdit={() => { setEditing({ table: 'supplier_payments', id: String(row.id) }); setKind('supplier'); chooseSupplier(String(row.supplier_id)); setAmountValue(String(Number(row.amount) / 100)); setReason(''); setOpen(true) }} onArchive={() => setArchive({ table: 'supplier_payments', id: String(row.id) })} />
+            <RowActions canWrite={canManagePurchases} onPreview={() => setPreview({ table: 'supplier_payments', id: String(row.id) })} onEdit={() => { setEditing({ table: 'supplier_payments', id: String(row.id) }); setKind('supplier'); chooseSupplier(String(row.supplier_id)); setAmountValue(centsToInput(Number(row.amount))); setReason(''); setOpen(true) }} onArchive={() => setArchive({ table: 'supplier_payments', id: String(row.id) })} />
           </li>
         ))}
       </ul>}
@@ -1654,7 +1676,7 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
                 {row.receipt_path ? <RecordImage path={String(row.receipt_path)} token={token} alt={String(row.category)} /> : null}
                 <span>{String(row.category)}</span>
               </span>
-              <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => { setEditingId(String(row.id)); setCategory(String(row.category ?? '')); setAmountValue(String(Number(row.amount) / 100)); setPaidBy(String(row.paid_by ?? '')); setReason(''); setReceipt(row.receipt_path == null ? null : String(row.receipt_path)); setOpen(true) }} onArchive={() => setArchiveId(String(row.id))} />
+              <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => { setEditingId(String(row.id)); setCategory(String(row.category ?? '')); setAmountValue(centsToInput(Number(row.amount))); setPaidBy(String(row.paid_by ?? '')); setReason(''); setReceipt(row.receipt_path == null ? null : String(row.receipt_path)); setOpen(true) }} onArchive={() => setArchiveId(String(row.id))} />
             </span>,
             partnerName(row.paid_by),
             centsToEuros(Number(row.amount)),
@@ -1672,8 +1694,14 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
           const gate = editReasonGate(String(existing?.created_at ?? lisbonToday()), lisbonToday(), reason)
           if (editingId && !gate.canSave) { setWarning(gate.message); return }
           const form = new FormData(event.currentTarget)
-          const amount = eurosToCents(Number(form.get('amount')))
+          const amount = parseEuros(String(form.get('amount') ?? ''))
+          if (amount == null) { setWarning('Enter the amount in euros, for example 6,50.'); return }
+          try {
           await saveLocal('expenses', { ...(existing ?? {}), id: editingId || uuidv7(), category: form.get('category'), amount, amount_eur: amount, currency: 'EUR', fx_rate: '1', paid_by: form.get('paid_by'), receipt_path: receipt, deleted_at: null })
+          } catch (caught) {
+            setWarning(caught instanceof Error ? caught.message : 'Could not save this expense.')
+            return
+          }
           setReceipt(null)
           setOpen(false)
           await onSaved()
@@ -1744,7 +1772,7 @@ function TransferEntry({ tables, canManage = true, onSaved }: { tables: LocalTab
         {tables.partner_transfers.map((row) => (
           <li key={String(row.id)}>
             <span>{nameOf(row.from_partner)} → {nameOf(row.to_partner)} · {centsToEuros(Number(row.amount))}</span>
-            <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => { setEditingId(String(row.id)); setFromId(String(row.from_partner)); setToId(String(row.to_partner)); setAmountValue(String(Number(row.amount) / 100)); setReason(''); setOpen(true) }} onArchive={() => setArchiveId(String(row.id))} />
+            <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => { setEditingId(String(row.id)); setFromId(String(row.from_partner)); setToId(String(row.to_partner)); setAmountValue(centsToInput(Number(row.amount))); setReason(''); setOpen(true) }} onArchive={() => setArchiveId(String(row.id))} />
           </li>
         ))}
       </ul>
@@ -1756,7 +1784,14 @@ function TransferEntry({ tables, canManage = true, onSaved }: { tables: LocalTab
           const existing = tables.partner_transfers.find((row) => row.id === editingId)
           const gate = editReasonGate(String(existing?.created_at ?? lisbonToday()), lisbonToday(), reason)
           if (editingId && !gate.canSave) { setWarning(gate.message); return }
-          await saveLocal('partner_transfers', { ...(existing ?? {}), id: editingId || uuidv7(), from_partner: form.get('from_partner'), to_partner: form.get('to_partner'), amount: eurosToCents(Number(form.get('amount'))), note: reason || existing?.note || null, deleted_at: null })
+          const amount = parseEuros(String(form.get('amount') ?? ''))
+          if (amount == null) { setWarning('Enter the amount in euros, for example 15,00.'); return }
+          try {
+          await saveLocal('partner_transfers', { ...(existing ?? {}), id: editingId || uuidv7(), from_partner: form.get('from_partner'), to_partner: form.get('to_partner'), amount, note: reason || existing?.note || null, deleted_at: null })
+          } catch (caught) {
+            setWarning(caught instanceof Error ? caught.message : 'Could not save this transfer.')
+            return
+          }
           setOpen(false)
           await onSaved()
         }}>

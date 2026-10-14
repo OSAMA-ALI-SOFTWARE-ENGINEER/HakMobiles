@@ -6,7 +6,7 @@ import type { LocalTables } from '../data/ledger'
 import { lineRevenue } from '../shared/calc'
 import { shopFigures, stageAfterOrders } from '../shared/crm'
 import { shopLabel } from '../shared/labels'
-import { centsToEuros, eurosToCents } from '../shared/money'
+import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
 import { allocationsFromCredit, paymentCredit } from '../shared/payments'
 import {
   averageCostByProduct,
@@ -46,7 +46,7 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
   const [price, setPrice] = useState('')
   const [discount, setDiscount] = useState('')
   const [date, setDate] = useState(lisbonToday())
-  const [extras, setExtras] = useState<DraftLine[]>([])
+  const [extras, setExtras] = useState<(DraftLine & { priceText: string })[]>([])
   const [editingId, setEditingId] = useState('')
   const [reason, setReason] = useState('')
   const [open, setOpen] = useState(false)
@@ -94,10 +94,15 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
     {
       productId: selectedProduct,
       qty: Number(qty || 0),
-      unitPriceCents: eurosToCents(Number(price || 0)),
-      discountCents: eurosToCents(Number(discount || 0)),
+      unitPriceCents: parseEuros(price) ?? 0,
+      discountCents: parseEuros(discount) ?? 0,
     },
-    ...extras,
+    ...extras.map((line) => ({
+      productId: line.productId,
+      qty: line.qty,
+      unitPriceCents: parseEuros(line.priceText) ?? 0,
+      discountCents: line.discountCents,
+    })),
   ]
   const total = saleTotalCents(draft.filter((line) => line.qty > 0))
   const productName = (id: string) => {
@@ -129,7 +134,7 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
   const chooseProduct = (id: string) => {
     setProductId(id)
     const product = tables.products.find((row) => row.id === id)
-    if (product) setPrice(String(Number(product.sell_price) / 100))
+    if (product) setPrice(centsToInput(Number(product.sell_price)))
   }
   const shopName = (id: string) => shopLabel(tables.customers.find((row) => row.id === id)?.shop_name)
 
@@ -179,13 +184,14 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
     chooseCustomer(String(sale.customer_id))
     setProductId(String(first.product_id))
     setQty(String(first.qty))
-    setPrice(String(Number(first.unit_price) / 100))
-    setDiscount(Number(first.discount ?? 0) === 0 ? '' : String(Number(first.discount) / 100))
+    setPrice(centsToInput(Number(first.unit_price)))
+    setDiscount(Number(first.discount ?? 0) === 0 ? '' : centsToInput(Number(first.discount)))
     setDate(String(sale.date ?? today).slice(0, 10))
     setExtras(rest.map((line) => ({
       productId: String(line.product_id),
       qty: Number(line.qty),
       unitPriceCents: Number(line.unit_price),
+      priceText: centsToInput(Number(line.unit_price)),
       discountCents: Number(line.discount ?? 0),
     })))
     setReason(String(sale.note ?? ''))
@@ -215,6 +221,10 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
           const lines = draft.filter((line) => line.qty > 0 && line.productId)
           if (lines.length === 0) {
             setWarning('Add at least one line.')
+            return
+          }
+          if (parseEuros(price) == null || (discount.trim() !== '' && parseEuros(discount) == null) || extras.some((line) => line.qty > 0 && parseEuros(line.priceText) == null)) {
+            setWarning('Enter prices in euros, for example 5,50.')
             return
           }
           const existingSale = tables.sales.find((row) => row.id === editingId)
@@ -310,6 +320,8 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
           setDate(lisbonToday())
           setOpen(false)
           await onSaved()
+        } catch (caught) {
+          setWarning(caught instanceof Error ? caught.message : 'Could not save this sale.')
         } finally {
           lock.current = false
           setBusy(false)
@@ -328,21 +340,21 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
               <select aria-label={`Line ${index + 2} product`} className="control" value={line.productId} onChange={(event) => {
                 const id = event.target.value
                 const product = tables.products.find((row) => row.id === id)
-                setExtras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, productId: id, unitPriceCents: product ? Number(product.sell_price) : item.unitPriceCents } : item))
+                setExtras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, productId: id, unitPriceCents: product ? Number(product.sell_price) : item.unitPriceCents, priceText: product ? centsToInput(Number(product.sell_price)) : item.priceText } : item))
               }}>{tables.products.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.code)} {String(row.name)}</option>)}</select>
             </label>
             <label className="control-line">Quantity
               <input aria-label={`Line ${index + 2} quantity`} type="number" className="control" value={line.qty} onChange={(event) => setExtras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, qty: Number(event.target.value) } : item))} />
             </label>
             <label className="control-line">Unit price
-              <input aria-label={`Line ${index + 2} price`} className="control" value={line.unitPriceCents / 100} onChange={(event) => setExtras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, unitPriceCents: eurosToCents(Number(event.target.value)) } : item))} />
+              <input aria-label={`Line ${index + 2} price`} className="control" value={line.priceText} onChange={(event) => setExtras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, priceText: event.target.value } : item))} />
             </label>
             <button type="button" className="btn-ghost" onClick={() => setExtras((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove line</button>
           </div>
         ))}
         <button type="button" className="btn-ghost" onClick={() => {
           const product = tables.products.find((row) => row.id === selectedProduct)
-          setExtras((current) => [...current, { productId: selectedProduct, qty: 1, unitPriceCents: Number(product?.sell_price ?? 0), discountCents: 0 }])
+          setExtras((current) => [...current, { productId: selectedProduct, qty: 1, unitPriceCents: Number(product?.sell_price ?? 0), priceText: centsToInput(Number(product?.sell_price ?? 0)), discountCents: 0 }])
         }}>Add line</button>
         <label className="control-line">Sale date<input name="date" type="date" aria-label="Sale date" className="control" value={date} onChange={(event) => setDate(event.target.value)} /></label>
         <p className="lede">Invoice total {centsToEuros(total)}</p>

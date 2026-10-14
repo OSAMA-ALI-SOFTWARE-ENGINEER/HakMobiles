@@ -7,7 +7,7 @@ import { PIPELINE_STAGES, followUpBucket, shopFigures } from '../shared/crm'
 import { whatsAppLink, isValidPortugueseNif } from '../shared/nif'
 import { archiveBlock } from '../shared/records'
 import { shopLabel } from '../shared/labels'
-import { centsToEuros, eurosToCents } from '../shared/money'
+import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
 import { customerStatement, statementMailUrl, statementWhatsAppUrl } from '../shared/reports'
 import { lisbonToday } from '../shared/sales'
 import { downloadStatementPdf } from '../reports/statementPdf'
@@ -85,12 +85,15 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
           const data = new FormData(event.currentTarget)
           const nif = String(data.get('nif') ?? '').trim()
           if (nif !== '' && !isValidPortugueseNif(nif)) { setShopError('Enter a valid Portuguese NIF.'); return }
+          const limitRaw = String(data.get('credit_limit') ?? '').trim()
+          const creditLimit = limitRaw === '' ? null : parseEuros(limitRaw)
+          if (limitRaw !== '' && creditLimit == null) { setShopError('Enter the credit limit in euros, for example 50,00.'); return }
           await saveLocal('customers', {
             ...shop,
             shop_name: data.get('shop_name'),
             phone: data.get('phone'),
             nif: nif || null,
-            credit_limit: eurosToCents(Number(data.get('credit_limit') || 0)),
+            credit_limit: creditLimit,
             deleted_at: null,
           })
           setShopError('')
@@ -107,7 +110,7 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
             <input name="nif" aria-label="NIF" className="control" defaultValue={String(shop.nif ?? '')} />
           </label>
           <label className="control-line">Credit limit
-            <input name="credit_limit" aria-label="Credit limit" className="control" defaultValue={String(Number(shop.credit_limit ?? 0) / 100)} />
+            <input name="credit_limit" aria-label="Credit limit" className="control" defaultValue={shop.credit_limit == null || shop.credit_limit === '' ? '' : centsToInput(Number(shop.credit_limit))} />
           </label>
           {shopError && <p className="warn">{shopError}</p>}
           <button className="btn">Save changes</button>

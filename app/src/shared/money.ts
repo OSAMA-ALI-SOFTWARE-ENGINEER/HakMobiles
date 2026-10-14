@@ -24,6 +24,13 @@ export function parseEuros(value: string): Cents | null {
   return eurosToCents(amount)
 }
 
+export function centsToInput(cents: Cents): string {
+  const absolute = Math.abs(Math.round(cents))
+  const euros = Math.floor(absolute / 100)
+  const rest = String(absolute % 100).padStart(2, '0')
+  return `${cents < 0 ? '-' : ''}${euros},${rest}`
+}
+
 export function centsToEuros(cents: Cents): string {
   const sign = cents < 0 ? '-' : ''
   const absolute = Math.abs(Math.round(cents))
