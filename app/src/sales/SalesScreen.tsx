@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { v7 as uuidv7 } from 'uuid'
 import { browserQuery, loadArchived, saveLocal } from '../db/browser'
 import type { LocalTables } from '../data/ledger'
@@ -49,6 +50,23 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
   const [editingId, setEditingId] = useState('')
   const [reason, setReason] = useState('')
   const [open, setOpen] = useState(false)
+  const [saleParams, setSaleParams] = useSearchParams()
+  useEffect(() => {
+    const customer = saleParams.get('customer')
+    const invoice = saleParams.get('invoice')
+    const openNew = saleParams.get('new') === '1'
+    if (!customer && !invoice && !openNew) return
+    if (customer) {
+      sessionStorage.setItem('hak.saleCustomer', customer)
+      setCustomerId(customer)
+    }
+    if (invoice) {
+      const sale = tables.sales.find((row) => row.id === invoice || row.invoice_no === invoice)
+      if (sale) setPreviewId(String(sale.id))
+    }
+    if (openNew) setOpen(true)
+    setSaleParams({}, { replace: true })
+  }, [saleParams, setSaleParams, tables.sales])
   const [previewId, setPreviewId] = useState('')
   const [archiveId, setArchiveId] = useState('')
   const selectedCustomer = tables.customers.some((row) => row.id === customerId) ? customerId : String(tables.customers[0]?.id ?? '')
@@ -339,7 +357,7 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
           today,
           reason,
         }).needsReason && <label className="control-line">Edit reason<input aria-label="Edit reason" className="control" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason for editing an older sale" /></label>}
-        <label className="check"><input type="checkbox" name="confirm" value="yes" /> Save anyway</label>
+        {(liveWarning || warning) && <label className="check"><input type="checkbox" name="confirm" value="yes" /> Save anyway</label>}
         {warning && <p className="warn">{warning}</p>}
         <button className="btn" disabled={busy}>{editingId ? 'Save changes' : 'Save sale'}</button>
       </form>

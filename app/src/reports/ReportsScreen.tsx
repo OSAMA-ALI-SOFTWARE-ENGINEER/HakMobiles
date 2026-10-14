@@ -94,6 +94,7 @@ export function ReportsScreen({ tables, showProfit }: { tables: LocalTables; sho
         </div>
       </div>
       <div className="filters">
+        <button type="button" className="btn-ghost" onClick={() => { setFrom(`${today.slice(0, 7)}-01`); setTo(today) }}>This month</button>
         <input aria-label="From" className="control" type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
         <input aria-label="To" className="control" type="date" value={to} onChange={(event) => setTo(event.target.value)} />
       </div>
@@ -114,7 +115,8 @@ export function ReportsScreen({ tables, showProfit }: { tables: LocalTables; sho
           {showProfit && reports.previousProfit && <p className="quiet">Previous period net profit {centsToEuros(reports.previousProfit.netProfitCents)}.</p>}
         </>
       )}
-      {view !== 'Profit and loss' && view !== 'Ageing' && <Groups groups={groups} showProfit={showProfit} />}
+      {view !== 'Profit and loss' && view !== 'Ageing' && groups.length === 0 && <p className="quiet">No sales in this range.</p>}
+      {view !== 'Profit and loss' && view !== 'Ageing' && groups.length > 0 && <Groups groups={groups} showProfit={showProfit} />}
       {view === 'Ageing' && (
         <>
           <article className="metric"><span>Ageing total</span><strong className="money">{centsToEuros(reports.ageing.totalCents)}</strong></article>

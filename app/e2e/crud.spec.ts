@@ -78,7 +78,7 @@ test('a purchase can be previewed, edited, and archived', async ({ page }) => {
   await page.getByLabel('Find product').fill(code)
   await expect(page.getByRole('row').filter({ hasText: code })).toContainText('0 pcs')
   await page.getByRole('link', { name: 'Suppliers' }).click()
-  await expect(page.getByRole('listitem').filter({ hasText: supplier })).toContainText('We owe €0.00')
+  await expect(page.getByRole('row').filter({ hasText: supplier })).toContainText('We owe € 0,00')
 })
 
 test('a product price can be edited and a supplier with nothing owed can be archived', async ({ page }) => {
@@ -100,17 +100,17 @@ test('a product price can be edited and a supplier with nothing owed can be arch
   await page.getByRole('dialog', { name: 'Edit product' }).getByPlaceholder('Selling price').fill('12')
   await page.getByRole('button', { name: 'Save changes' }).click()
   await product.getByRole('button', { name: 'Preview' }).click()
-  await expect(page.getByRole('dialog', { name: 'Product' })).toContainText('Price €12.00')
+  await expect(page.getByRole('dialog', { name: 'Product' })).toContainText('Price € 12,00')
   await page.getByRole('dialog', { name: 'Product' }).getByRole('button', { name: 'Close' }).click()
 
   await page.getByRole('link', { name: 'Suppliers' }).click()
   await openForm(page, 'New supplier')
   await page.getByLabel('Name').fill(supplier)
   await page.getByRole('button', { name: 'Save' }).click()
-  const row = page.getByRole('listitem').filter({ hasText: supplier })
+  const row = page.getByRole('row').filter({ hasText: supplier })
   await chooseAction(row, 'Archive')
   await page.getByRole('dialog', { name: 'Archive supplier' }).getByRole('button', { name: 'Archive record' }).click()
-  await expect(page.getByRole('listitem').filter({ hasText: supplier })).toHaveCount(0)
+  await expect(page.getByRole('row').filter({ hasText: supplier })).toHaveCount(0)
 })
 
 test('archiving a sale puts the stock back and does not reuse the invoice number', async ({ page }) => {
@@ -138,7 +138,7 @@ test('archiving a sale puts the stock back and does not reuse the invoice number
   await page.locator('input[name="qty"]').fill('2')
   await page.locator('input[name="price"]').fill('10')
   await page.getByRole('button', { name: 'Save sale' }).click()
-  const sale = page.getByRole('row').filter({ hasText: shop }).filter({ hasText: '€20.00' })
+  const sale = page.getByRole('row').filter({ hasText: shop }).filter({ hasText: '€ 20,00' })
   await expect(sale).toBeVisible()
   const invoiceNo = (await sale.locator('.cell-main > span').first().innerText()).trim()
   await sale.getByRole('button', { name: 'Preview' }).click()
@@ -159,7 +159,7 @@ test('archiving a sale puts the stock back and does not reuse the invoice number
   await page.locator('input[name="qty"]').fill('1')
   await page.locator('input[name="price"]').fill('10')
   await page.getByRole('button', { name: 'Save sale' }).click()
-  const next = page.getByRole('row').filter({ hasText: shop }).filter({ hasText: '€10.00' })
+  const next = page.getByRole('row').filter({ hasText: shop }).filter({ hasText: '€ 10,00' })
   await expect(next).toBeVisible()
   const nextNo = (await next.locator('.cell-main > span').first().innerText()).trim()
   expect(nextNo).not.toBe(invoiceNo)
@@ -198,11 +198,11 @@ test('archiving a customer payment makes the invoice unpaid again', async ({ pag
   await page.getByRole('button', { name: 'Save payment' }).click()
   await expect(page.getByRole('row').filter({ hasText: shop }).filter({ has: page.getByRole('cell', { name: 'Paid', exact: true }) })).toBeVisible()
 
-  const payment = page.getByRole('listitem').filter({ hasText: `Payment · ${shop}` }).filter({ hasText: '€15.00' })
+  const payment = page.getByRole('listitem').filter({ hasText: `Payment · ${shop}` }).filter({ hasText: '€ 15,00' })
   await chooseAction(payment, 'Archive')
   await page.getByRole('dialog', { name: 'Archive payment' }).getByRole('button', { name: 'Archive record' }).click()
   await expect(payment).toHaveCount(0)
-  await expect(page.getByRole('row').filter({ hasText: shop }).filter({ hasText: '€15.00 left' })).toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: shop }).filter({ hasText: '€ 15,00 left' })).toBeVisible()
 })
 
 test('a transfer to the same partner is refused and an expense can be archived', async ({ page }) => {
@@ -225,7 +225,7 @@ test('a transfer to the same partner is refused and an expense can be archived',
   await page.getByLabel('Amount').fill('6')
   await page.getByLabel('Paid by').selectOption({ label: 'Haseeb' })
   await page.getByRole('button', { name: 'Save expense' }).click()
-  const expense = page.getByRole('row').filter({ hasText: `CRUD rent ${stamp}` }).filter({ hasText: '€6.00' })
+  const expense = page.getByRole('row').filter({ hasText: `CRUD rent ${stamp}` }).filter({ hasText: '€ 6,00' })
   await expect(expense).toBeVisible()
   await chooseAction(expense, 'Archive')
   await page.getByRole('dialog', { name: 'Archive expense' }).getByRole('button', { name: 'Archive record' }).click()

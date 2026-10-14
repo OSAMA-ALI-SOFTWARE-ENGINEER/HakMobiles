@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { v7 as uuidv7 } from 'uuid'
 import { saveLocal } from '../db/browser'
 import type { LocalTables } from '../data/ledger'
@@ -22,7 +22,9 @@ function todayStamp() {
 export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }: { tables: LocalTables; canManage: boolean; isSuperAdmin?: boolean; onSaved: () => Promise<void> }) {
   const { id = '' } = useParams()
   const shop = tables.customers.find((row) => row.id === id)
-  const [tab, setTab] = useState<'Sales' | 'Payments' | 'Activities' | 'Follow-ups'>('Activities')
+  const [tab, setTab] = useState<'Sales' | 'Payments' | 'Activities' | 'Follow-ups' | 'Notes'>('Activities')
+  const [notes, setNotes] = useState(String(shop?.notes ?? ''))
+  useEffect(() => { setNotes(String(shop?.notes ?? '')) }, [id, shop?.notes])
   const [error, setError] = useState('')
   const [activityOpen, setActivityOpen] = useState(false)
   const [followOpen, setFollowOpen] = useState(false)
@@ -38,6 +40,8 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
   const [shopArchive, setShopArchive] = useState(false)
   const [shopError, setShopError] = useState('')
   if (!shop) return <section className="page"><h1>Shop not found</h1></section>
+  const stage = PIPELINE_STAGES.find((item) => item.id === String(shop.status ?? 'lead'))?.label ?? 'Lead'
+  const place = String(shop.city ?? '').trim()
 
   const figures = shopFigures({
     customerId: id,
@@ -56,13 +60,13 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
       <div className="page-head">
         <div>
           <h1>{String(shop.shop_name)}</h1>
-          <p className="lede">{String(shop.city ?? shop.status ?? 'lead')}</p>
+          <p className="lede">{place || stage}</p>
         </div>
         <div className="quick-actions">
           {phone && <a className="btn-ghost" href={`tel:${phone}`}>Call</a>}
           {phone && <a className="btn-ghost" href={whatsAppLink(phone)} target="_blank" rel="noreferrer">WhatsApp</a>}
           {phone && <a className="btn-ghost" href={statementWhatsAppUrl(statement)} target="_blank" rel="noreferrer">WhatsApp statement</a>}
-          {shop.email && <a className="btn-ghost" href={statementMailUrl(statement)}>Email statement</a>}
+          {typeof shop.email === 'string' && shop.email !== '' && <a className="btn-ghost" href={statementMailUrl(statement)}>Email statement</a>}
           <button type="button" className="btn-ghost" onClick={() => void downloadStatementPdf(statement)}>Statement</button>
           {canManage && <button type="button" className="btn-ghost" onClick={() => { setShopError(''); setShopOpen(true) }}>Edit shop</button>}
           {canManage && <button type="button" className="btn-ghost" onClick={() => {
@@ -70,7 +74,8 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
             if (block) { setShopError(block); return }
             setShopArchive(true)
           }}>Archive shop</button>}
-          <Link className="btn" to="/sales">New sale</Link>
+          <Link className="btn" to={`/sales?new=1&customer=${id}`}>New sale</Link>
+          <Link className="btn-ghost" to={`/payments?new=1&customer=${id}`}>Record payment</Link>
         </div>
       </div>
       {shopError && <p className="warn">{shopError}</p>}
@@ -135,12 +140,24 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
         </label>
       )}
       <div className="tabs">
-        {(['Sales', 'Payments', 'Activities', 'Follow-ups'] as const).map((name) => (
+        {(['Sales', 'Payments', 'Activities', 'Follow-ups', 'Notes'] as const).map((name) => (
           <button key={name} type="button" className={tab === name ? 'active' : ''} aria-pressed={tab === name} onClick={() => setTab(name)}>{name}</button>
         ))}
       </div>
-      {tab === 'Sales' && <ul className="record-list">{sales.map((sale) => <li key={String(sale.id)}>{String(sale.invoice_no)} · {String(sale.date ?? '')}</li>)}</ul>}
-      {tab === 'Payments' && <ul className="record-list">{tables.customer_payments.filter((row) => row.customer_id === id).map((row) => <li key={String(row.id)}>{centsToEuros(Number(row.amount))}</li>)}</ul>}
+      {tab === 'Sales' && <ul className="record-list">{sales.length === 0 && <li>No sales yet.</li>}{sales.map((sale) => <li key={String(sale.id)}><Link to={`/sales?invoice=${String(sale.id)}`}>{String(sale.invoice_no)}</Link> · {String(sale.date ?? '').slice(0, 10)}</li>)}</ul>}
+      {tab === 'Payments' && <ul className="record-list">{tables.customer_payments.filter((row) => row.customer_id === id).length === 0 && <li>No payments yet.</li>}{tables.customer_payments.filter((row) => row.customer_id === id).map((row) => <li key={String(row.id)}>{centsToEuros(Number(row.amount))} · {String(row.created_at ?? '').slice(0, 10)}</li>)}</ul>}
+      {tab === 'Notes' && (
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          await saveLocal('customers', { ...shop, notes })
+          await onSaved()
+        }}>
+          <label className="control-line">Notes
+            <textarea aria-label="Notes" className="control" rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} />
+          </label>
+          <button className="btn">Save notes</button>
+        </form>
+      )}
       {tab === 'Activities' && (
         <>
           {canManage && <button type="button" className="btn" onClick={() => { setActivityId(''); setActivityBody(''); setActivityOpen(true) }}>New activity</button>}
@@ -269,6 +286,7 @@ export function Pipeline({ tables, canManage, onSaved }: { tables: LocalTables; 
   return (
     <section className="page">
       <div className="page-head"><h1>Pipeline</h1></div>
+      {tables.customers.length === 0 && <p className="quiet">No shops yet. <Link to="/customers?new=1">Add a shop</Link></p>}
       <div className="board">
         {PIPELINE_STAGES.map((stage) => {
           const shops = tables.customers.filter((row) => String(row.status ?? 'lead') === stage.id)
@@ -279,7 +297,12 @@ export function Pipeline({ tables, canManage, onSaved }: { tables: LocalTables; 
               {shops.map((row) => (
                 <article key={String(row.id)} className="shop-card" draggable={canManage} onDragStart={() => setDragging(String(row.id))}>
                   <Link to={`/customers/${String(row.id)}`}>{String(row.shop_name)}</Link>
+                  {row.phone ? <p>{String(row.phone)}</p> : null}
                   {row.city ? <p>{String(row.city)}</p> : null}
+                  {(() => {
+                    const next = tables.follow_ups.filter((item) => item.customer_id === row.id && !item.done_at).sort((a, b) => String(a.due_at).localeCompare(String(b.due_at)))[0]
+                    return next ? <p>Next: {String(next.title)} · {String(next.due_at).slice(0, 10)}</p> : null
+                  })()}
                 </article>
               ))}
             </div>
@@ -292,6 +315,13 @@ export function Pipeline({ tables, canManage, onSaved }: { tables: LocalTables; 
 
 export function FollowUps({ tables, canManage, onSaved }: { tables: LocalTables; canManage: boolean; onSaved: () => Promise<void> }) {
   const [bucket, setBucket] = useState<'Today' | 'Overdue' | 'Upcoming' | 'Done'>('Today')
+  const [creating, setCreating] = useState(false)
+  const [followParams, setFollowParams] = useSearchParams()
+  useEffect(() => {
+    if (followParams.get('new') !== '1') return
+    setCreating(true)
+    setFollowParams({}, { replace: true })
+  }, [followParams, setFollowParams])
   const [editingId, setEditingId] = useState('')
   const [title, setTitle] = useState('')
   const [due, setDue] = useState(todayStamp())
@@ -302,13 +332,14 @@ export function FollowUps({ tables, canManage, onSaved }: { tables: LocalTables;
 
   return (
     <section className="page">
-      <div className="page-head"><h1>Follow-ups</h1></div>
+      <div className="page-head"><h1>Follow-ups</h1>{canManage && <button type="button" className="btn" onClick={() => { setTitle(''); setDue(todayStamp()); setCreating(true) }}>New follow-up</button>}</div>
       <div className="tabs">
         {(['Today', 'Overdue', 'Upcoming', 'Done'] as const).map((name) => (
           <button key={name} type="button" className={bucket === name ? 'active' : ''} aria-pressed={bucket === name} onClick={() => setBucket(name)}>{name}</button>
         ))}
       </div>
       <ul className="record-list">
+        {rows.length === 0 && <li>{bucket === 'Today' ? 'Nothing due today' : `Nothing ${bucket.toLowerCase()}`}</li>}
         {rows.map((row) => {
           const shop = tables.customers.find((customer) => customer.id === row.customer_id)
           return (
@@ -329,6 +360,26 @@ export function FollowUps({ tables, canManage, onSaved }: { tables: LocalTables;
           )
         })}
       </ul>
+      <Popup title="New follow-up" open={creating} onClose={() => setCreating(false)}>
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          const data = new FormData(event.currentTarget)
+          await saveLocal('follow_ups', { id: uuidv7(), customer_id: data.get('customer_id'), title: data.get('title'), type: 'call', due_at: data.get('due_at'), deleted_at: null })
+          setCreating(false)
+          await onSaved()
+        }}>
+          <label className="control-line">Shop
+            <select name="customer_id" aria-label="Shop" className="control" required>{tables.customers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.shop_name)}</option>)}</select>
+          </label>
+          <label className="control-line">Title
+            <input name="title" aria-label="Follow-up title" required className="control" value={title} onChange={(event) => setTitle(event.target.value)} />
+          </label>
+          <label className="control-line">Due date
+            <input name="due_at" aria-label="Due date" type="date" required className="control" value={due} onChange={(event) => setDue(event.target.value)} />
+          </label>
+          <button className="btn">Save follow-up</button>
+        </form>
+      </Popup>
       <Popup title="Edit follow-up" open={editing != null} onClose={() => setEditingId('')}>
         <form className="form-grid" onSubmit={async (event) => {
           event.preventDefault()

@@ -12,6 +12,7 @@ export function trackerNotices(input: {
   today: string
   canSeeStock: boolean
   muted: string[]
+  overdueDays?: number
 }): TrackerNotice[] {
   const notices: TrackerNotice[] = []
   if (input.canSeeStock && !input.muted.includes('low_stock')) {
@@ -22,7 +23,7 @@ export function trackerNotices(input: {
   }
   if (!input.muted.includes('invoice_overdue')) {
     for (const invoice of input.openInvoices) {
-      if (isOverdue(invoice.date, 'Unpaid', input.today)) {
+      if (isOverdue(invoice.date, 'Unpaid', input.today, input.overdueDays)) {
         notices.push({ id: `due-${invoice.id}`, kind: 'invoice_overdue', text: `${invoice.label} is overdue` })
       }
     }

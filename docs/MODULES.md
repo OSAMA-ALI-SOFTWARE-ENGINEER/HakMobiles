@@ -30,7 +30,7 @@ The app must feel like HAK's own tool, not a stock template: TailAdmin supplies 
 | Command bar | Ctrl+K (Cmd+K on Mac) searches shops, products, invoices and people, and runs actions such as “New sale for Loja Central” |
 | Quick add | A “+ New” button in the header with Sale, Payment, Customer, Product, Purchase, Expense, Follow-up |
 | Shortcuts | `N S` new sale, `N P` new payment, `N C` new customer, `/` search, `?` shows all shortcuts |
-| Drawers, not page jumps | Create and edit open in a side drawer over the list, so the user never loses their place |
+| Drawers, not page jumps | Later. Create and edit stay in the current popup until a later pass. A side drawer is the intended pattern so the list stays in place, and it is not part of the current build. |
 | Smart tables | Search, filter chips, sort, column chooser, saved views, sticky header, row selection, bulk actions, export, fast scrolling for thousands of rows |
 | Smart forms | Today's date, “me” as partner, the last customer and the product's price are pre-filled; type-ahead dropdowns with “+ Create new” inside them; Enter moves to the next field; errors shown under the field as you type |
 | Draft autosave | An unfinished form is kept as a draft and offered again when the user returns |
@@ -49,7 +49,7 @@ Users can edit anything they are allowed to, from the place where they see it, w
 | Tool | What the user does |
 | --- | --- |
 | Inline edit | Click a cell (or press Enter), change it, Enter to save, Esc to cancel, Tab to the next cell |
-| Edit drawer | Open the full record from a row to edit every field, with its history and attachments |
+| Edit drawer | Later. Full-record editing stays in the current popup. The side drawer, with history and attachments, is a future pass. |
 | Bulk edit | Select rows → set a field for all (category, status, assigned salesperson, tags, price change by % or €) |
 | Duplicate | Copy a record as a starting point (a product colour variant, a repeat order) |
 | Archive and restore | Archive instead of delete; the Archive view restores any record |

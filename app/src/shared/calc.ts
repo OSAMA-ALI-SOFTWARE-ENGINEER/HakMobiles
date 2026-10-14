@@ -1,4 +1,4 @@
-import { weightedAverageCost, type Cents } from './money'
+import { centsToEuros, weightedAverageCost, type Cents } from './money'
 
 export type StockStatus = 'CHECK' | 'OUT' | 'LOW' | 'OK'
 
@@ -233,7 +233,7 @@ function describeBalances(balances: Summary['partnerBalances']): string {
 }
 
 function formatPlain(cents: Cents): string {
-  return `€${(cents / 100).toFixed(2)}`
+  return centsToEuros(cents)
 }
 
 export const GOLDEN_IDS = {

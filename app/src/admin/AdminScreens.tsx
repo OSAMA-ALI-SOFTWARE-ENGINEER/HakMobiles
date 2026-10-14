@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { RecordTable } from '../ui/RecordTable'
 
 export function ActivityScreen({ token }: { token: string }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
@@ -23,18 +24,18 @@ export function ActivityScreen({ token }: { token: string }) {
         <input aria-label="Find activity" className="control" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search user, action or value" />
       </label>
       {error && <p className="error">{error}</p>}
-      <ul className="record-list">
-        {shown.map((row) => {
+      <RecordTable
+        caption="Activity"
+        headers={['Who', 'What', 'When']}
+        rows={shown.map((row) => {
           const properties = row.properties && typeof row.properties === 'object' ? row.properties as Record<string, unknown> : {}
           const change = properties.old != null || properties.new != null ? ` ${properties.old ?? '—'} → ${properties.new ?? '—'}` : ''
-          return (
-            <li key={String(row.id)}>
-              <span>{String(row.description)}{change}</span>
-              <span className="quiet">{String(row.causer ?? 'System')} · {String(row.created_at ?? '')}</span>
-            </li>
-          )
+          return {
+            key: String(row.id),
+            cells: [String(row.causer ?? 'System'), `${String(row.description)}${change}`, String(row.created_at ?? '')],
+          }
         })}
-      </ul>
+      />
     </section>
   )
 }

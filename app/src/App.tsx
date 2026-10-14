@@ -3,7 +3,7 @@ import { Link, NavLink, Navigate, Route, Routes, useNavigate, useSearchParams } 
 import { ArrowLeftRight, BarChart3, Bell, Calendar, CalendarDays, ChevronDown, Eye, EyeOff, Kanban, LayoutDashboard, LogOut, Package, Receipt, ScrollText, Search, Settings, Shield, ShoppingBag, Store, Truck, Wallet, type LucideIcon } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, CartesianGrid, ComposedChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { api, ApiError } from './api'
@@ -27,6 +27,7 @@ import { editReasonGate, archiveBlock } from './shared/records'
 import { filterProducts } from './shared/products'
 import { lisbonToday } from './shared/sales'
 import { shopLabel } from './shared/labels'
+import { settingList, settingNumber } from './shared/settings'
 import { Popup } from './ui/Popup'
 import { ArchiveDialog, RowActions } from './ui/RecordActions'
 import { RecordTable } from './ui/RecordTable'
@@ -139,6 +140,7 @@ export default function App() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [noticesOpen, setNoticesOpen] = useState(false)
+  const [desktopNew, setDesktopNew] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const navigate = useNavigate()
 
@@ -157,6 +159,7 @@ export default function App() {
       if (target instanceof Element && target.closest('.top-actions')) return
       setNoticesOpen(false)
       setAccountOpen(false)
+      setDesktopNew(false)
     }
     document.addEventListener('mousedown', closeMenus)
     return () => document.removeEventListener('mousedown', closeMenus)
@@ -319,7 +322,18 @@ export default function App() {
     today,
     canSeeStock: session.roles.includes('Super Admin') || session.permissions.includes('products.view'),
     muted: showOverdue ? [] : ['invoice_overdue'],
+    overdueDays: settingNumber(tables.settings, 'overdue_days', 30),
   })
+  const noticeHref = (item: { id: string; kind: string; text: string }) => {
+    if (item.kind === 'low_stock' || item.kind === 'out_of_stock') {
+      const code = item.text.split(' is ')[0]
+      const product = tables.products.find((row) => String(row.code) === code)
+      return product ? `/products?product=${product.id}` : '/products'
+    }
+    const invoiceNo = item.id.replace(/^due-/, '')
+    const sale = tables.sales.find((row) => String(row.invoice_no) === invoiceNo)
+    return sale ? `/sales?invoice=${sale.id}` : '/sales'
+  }
   const saveSession = (next: Session) => {
     writeSession(next)
     setSession(next)
@@ -336,10 +350,19 @@ export default function App() {
   const menu = visibleMenu(session.permissions, session.roles.includes('Super Admin'))
   const needle = query.trim().toLowerCase()
   const found = needle === '' ? [] : [
-    ...tables.products.filter((row) => `${row.code} ${row.name}`.toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), label: `${row.code} ${row.name}`, to: `/products?product=${row.id}` })),
-    ...tables.customers.filter((row) => String(row.shop_name ?? '').toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), label: String(row.shop_name), to: `/customers/${row.id}` })),
-    ...tables.sales.filter((row) => String(row.invoice_no ?? '').toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), label: String(row.invoice_no), to: '/sales' })),
+    ...tables.products.filter((row) => `${row.code} ${row.name}`.toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), kind: 'Product', label: `${row.code} ${row.name}`, to: `/products?product=${row.id}`, saleTo: '' })),
+    ...tables.customers.filter((row) => String(row.shop_name ?? '').toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), kind: 'Shop', label: String(row.shop_name), to: `/customers/${row.id}`, saleTo: `/sales?new=1&customer=${row.id}` })),
+    ...tables.sales.filter((row) => String(row.invoice_no ?? '').toLowerCase().includes(needle)).slice(0, 5).map((row) => ({ id: String(row.id), kind: 'Invoice', label: String(row.invoice_no), to: `/sales?invoice=${row.id}`, saleTo: '' })),
   ].slice(0, 8)
+  const newLinks = [
+    ['Sale', '/sales?new=1'],
+    ['Payment', '/payments?new=1'],
+    ['Customer', '/customers?new=1'],
+    ['Product', '/products?new=1'],
+    ['Purchase', '/purchases?new=1'],
+    ['Expense', '/expenses?new=1'],
+    ['Follow-up', '/follow-ups?new=1'],
+  ] as const
   const signOut = () => { sessionStorage.removeItem('hak.unlocked'); writeSession(null); setSession(null); setUnlocked(false) }
 
   return (
@@ -370,12 +393,24 @@ export default function App() {
             {found.length > 0 && (
               <ul className="find-results">
                 {found.map((item) => (
-                  <li key={item.id}><button type="button" role="option" onClick={() => { setQuery(''); navigate(item.to) }}>{item.label}</button></li>
+                  <li key={item.id}>
+                    <span className="kind">{item.kind}</span>
+                    <button type="button" role="option" onClick={() => { setQuery(''); navigate(item.to) }}>{item.label}</button>
+                    {item.saleTo && <button type="button" onClick={() => { setQuery(''); navigate(item.saleTo) }}>New sale</button>}
+                  </li>
                 ))}
               </ul>
             )}
           </label>
           <div className="top-actions">
+            <div className="account">
+              <button type="button" className="btn" aria-expanded={desktopNew} aria-haspopup="menu" onClick={() => { setNoticesOpen(false); setAccountOpen(false); setDesktopNew((open) => !open) }}>New</button>
+              {desktopNew && (
+                <div className="new-menu" role="menu" aria-label="New">
+                  {newLinks.map(([label, to]) => <Link key={to} to={to} role="menuitem" onClick={() => setDesktopNew(false)}>{label}</Link>)}
+                </div>
+              )}
+            </div>
             <p className={`status ${statusTone(status)}`}><i />{status}{notice ? ` · ${notice}` : ''}</p>
             <div className="account">
               <button type="button" className="icon-btn" aria-label="Notifications" aria-expanded={noticesOpen} onClick={() => { setAccountOpen(false); setNoticesOpen((open) => !open) }}>
@@ -387,7 +422,7 @@ export default function App() {
                   <p className="user-name">Notices</p>
                   <p className="quiet">Stock warnings and invoices that are past due.</p>
                   {notices.length === 0 && <p className="quiet">Nothing needs attention.</p>}
-                  {notices.map((item) => <p key={item.id}>{item.text}</p>)}
+                  {notices.map((item) => <Link key={item.id} to={noticeHref(item)} onClick={() => setNoticesOpen(false)}>{item.text}</Link>)}
                   <label className="check">
                     <input type="checkbox" checked={showOverdue} onChange={(event) => void setOverdueNotices(event.target.checked)} />
                     Show overdue invoices
@@ -416,16 +451,10 @@ export default function App() {
         </header>
         <main className="content">
         <Routes>
-          <Route path="/" element={<Dashboard tables={tables} showProfit={showProfit} onLoadSample={session.roles.includes('Super Admin') ? async () => {
-            await loadGoldenSample(session.token)
-            await refresh()
-          } : undefined} onImport={session.roles.includes('Super Admin') ? async (bytes) => {
-            await replaceBusinessData(session.token, tablesFromWorkbook(bytes))
-            await refresh()
-          } : undefined} />} />
+          <Route path="/" element={<Dashboard tables={tables} showProfit={showProfit} canBackup={session.roles.includes('Super Admin')} />} />
           <Route path="/products" element={<Guard session={session} path="/products"><Products tables={tables} token={session.token} canManage={session.roles.includes('Super Admin') || session.permissions.includes('products.manage')} canAdjust={session.roles.includes('Super Admin') || session.permissions.includes('stock.adjust')} canSeeCost={session.roles.includes('Super Admin') || session.permissions.includes('products.view_cost')} onSaved={refresh} /></Guard>} />
           <Route path="/sales" element={<Guard session={session} path="/sales"><SalesScreen tables={tables} prefix={session.invoicePrefix} userId={session.userId} userName={session.userName} isSuperAdmin={session.roles.includes('Super Admin')} canManageSales={session.permissions.includes('sales.manage')} canEditOwn={session.permissions.includes('sales.edit_own')} onSaved={refresh} /></Guard>} />
-          <Route path="/customers" element={<Guard session={session} path="/customers"><SimpleEntry title="Customers" table="customers" fields={['shop_name', 'phone', 'nif', 'credit_limit']} onSaved={refresh} rows={tables.customers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} canMerge={session.roles.includes('Super Admin')} sales={tables.sales} lines={tables.sale_lines} allocations={tables.payment_allocations} payments={tables.customer_payments} /></Guard>} />
+          <Route path="/customers" element={<Guard session={session} path="/customers"><SimpleEntry title="Customers" table="customers" fields={['shop_name', 'phone', 'nif', 'city', 'email', 'address', 'credit_limit']} onSaved={refresh} rows={tables.customers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} canMerge={session.roles.includes('Super Admin')} sales={tables.sales} lines={tables.sale_lines} allocations={tables.payment_allocations} payments={tables.customer_payments} /></Guard>} />
           <Route path="/customers/:id" element={<Guard session={session} path="/customers"><Customer360 tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} onSaved={refresh} /></Guard>} />
           <Route path="/pipeline" element={<Guard session={session} path="/pipeline"><Pipeline tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} onSaved={refresh} /></Guard>} />
           <Route path="/follow-ups" element={<Guard session={session} path="/follow-ups"><FollowUps tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} onSaved={refresh} /></Guard>} />
@@ -450,7 +479,7 @@ export default function App() {
           <Route path="/transfers" element={<Guard session={session} path="/transfers"><TransferEntry tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('transfers.manage')} onSaved={refresh} /></Guard>} />
           <Route path="/reports" element={<Guard session={session} path="/reports"><ReportsScreen tables={tables} showProfit={showProfit} /></Guard>} />
           <Route path="/activity" element={<Guard session={session} path="/activity"><ActivityScreen token={session.token} /></Guard>} />
-          <Route path="/settings" element={<Guard session={session} path="/settings"><SettingsScreen tables={tables} onSaved={refresh} /></Guard>} />
+          <Route path="/settings" element={<Guard session={session} path="/settings"><SettingsScreen tables={tables} onSaved={refresh} onLoadSample={session.roles.includes('Super Admin') ? async () => { await loadGoldenSample(session.token); await refresh() } : undefined} onImport={session.roles.includes('Super Admin') ? async (bytes) => { await replaceBusinessData(session.token, tablesFromWorkbook(bytes)); await refresh() } : undefined} /></Guard>} />
           <Route path="/admin/users" element={<Guard session={session} path="/admin/users"><Admin token={session.token} /></Guard>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -763,10 +792,7 @@ function PinGate({ onUnlock, onLockout }: { onUnlock: () => void; onLockout: () 
   )
 }
 
-function Dashboard({ tables, showProfit, onLoadSample, onImport }: { tables: LocalTables; showProfit: boolean; onLoadSample?: () => Promise<void>; onImport?: (bytes: ArrayBuffer) => Promise<void> }) {
-  const [confirmSample, setConfirmSample] = useState(false)
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [restoreFile, setRestoreFile] = useState<File | null>(null)
+function Dashboard({ tables, showProfit, canBackup = false }: { tables: LocalTables; showProfit: boolean; canBackup?: boolean }) {
   const [backupError, setBackupError] = useState('')
   const [history, setHistory] = useState<{ at: string; name: string; status: string }[]>(() => {
     try { return JSON.parse(localStorage.getItem('hak.backupHistory') ?? '[]') } catch { return [] }
@@ -821,44 +847,10 @@ function Dashboard({ tables, showProfit, onLoadSample, onImport }: { tables: Loc
           </label>
         </div>
       )}
-      <Popup title="Load sample data" open={confirmSample} onClose={() => setConfirmSample(false)}>
-        <form className="form-grid" onSubmit={(event) => {
-          event.preventDefault()
-          setConfirmSample(false)
-          if (onLoadSample) void onLoadSample()
-        }}>
-          <p className="lede">This replaces the current business with the sample ledger. Sales become €605.00.</p>
-          <button className="btn-danger">Replace with sample</button>
-        </form>
-      </Popup>
-      <Popup title="Import tracker workbook" open={importFile != null} onClose={() => setImportFile(null)}>
-        <form className="form-grid" onSubmit={(event) => {
-          event.preventDefault()
-          const file = importFile
-          setImportFile(null)
-          if (!file || !onImport) return
-          void file.arrayBuffer().then((bytes) => onImport(bytes)).catch((caught: unknown) => window.alert(caught instanceof Error ? caught.message : 'The tracker file could not be imported.'))
-        }}>
-          <p className="lede">This replaces the current business with the rows in {importFile?.name ?? 'the workbook'}.</p>
-          <button className="btn-danger">Replace with workbook</button>
-        </form>
-      </Popup>
-      <Popup title="Restore backup" open={restoreFile != null} onClose={() => setRestoreFile(null)}>
-        <form className="form-grid" onSubmit={(event) => {
-          event.preventDefault()
-          const file = restoreFile
-          setRestoreFile(null)
-          if (!file || !onImport) return
-          void file.arrayBuffer().then((bytes) => onImport(bytes)).catch((caught: unknown) => window.alert(caught instanceof Error ? caught.message : 'The backup could not be restored.'))
-        }}>
-          <p className="lede">This replaces the current business with {restoreFile?.name ?? 'the backup'}.</p>
-          <button className="btn-danger">Replace with backup</button>
-        </form>
-      </Popup>
       {backupError && <p className="error">{backupError}</p>}
       <h2 className="section-label">This period</h2>
       <div className="metrics">
-        <Card label="Sales" value={centsToEuros(view.revenueCents)} note={`Previous period ${centsToEuros(view.previousRevenueCents)}`} tone="brand" />
+        <Card label="Sales" to="/sales" value={centsToEuros(view.revenueCents)} note={`Previous period ${centsToEuros(view.previousRevenueCents)}`} tone="brand" />
         {showProfit && <Card label="Net profit" value={centsToEuros(view.netProfitCents)} note={`Previous period ${centsToEuros(view.previousNetProfitCents)}`} tone={view.netProfitCents >= 0 ? 'ok' : 'danger'} />}
         {showProfit && <Card label="Margin" value={`${view.marginPercent}%`} tone="brand" />}
         {showProfit && <Card label="Expenses" value={centsToEuros(view.expenseCents)} tone="danger" />}
@@ -868,23 +860,18 @@ function Dashboard({ tables, showProfit, onLoadSample, onImport }: { tables: Loc
       </div>
       <h2 className="section-label">Right now</h2>
       <div className="metrics">
-        <Card label="Customers owe" value={centsToEuros(view.customersOweCents)} tone={view.customersOweCents > 0 ? 'danger' : 'ok'} />
-        <Card label="We owe suppliers" value={centsToEuros(view.suppliersOweCents)} tone={view.suppliersOweCents > 0 ? 'danger' : 'ok'} />
-        <Card label="Stock value" value={centsToEuros(view.stockValueCents)} tone="brand" />
+        <Card label="Customers owe" to="/customers" value={centsToEuros(view.customersOweCents)} tone={view.customersOweCents > 0 ? 'danger' : 'ok'} />
+        <Card label="We owe suppliers" to="/suppliers" value={centsToEuros(view.suppliersOweCents)} tone={view.suppliersOweCents > 0 ? 'danger' : 'ok'} />
+        <Card label="Stock value" to="/products" value={centsToEuros(view.stockValueCents)} tone="brand" />
         {showProfit && <Card label="Total investment" value={centsToEuros(view.investmentCents)} tone="brand" />}
       </div>
-      {view.revenueCents === 0 && <p className="quiet">No sales in this period.</p>}
+      {view.revenueCents === 0 && <p className="quiet">No sales in this period. <Link to="/sales?new=1">Record a sale</Link></p>}
       <div className="split">
         {showProfit && (
           <div className="panel partner-panel">
             <h2>Partners</h2>
             <p className="quiet">{view.whoOwesWhom}</p>
             {view.sharesMessage && <p className="warn">{view.sharesMessage}</p>}
-            <ul className="partner-list">
-              {view.partners.map((partner) => (
-                <li key={partner.id}>{partner.name}: balance {centsToEuros(partner.balanceCents)}, share {centsToEuros(partner.shareCents)} · owns {partner.ownsPercent}% · profit {partner.profitPercent}%</li>
-              ))}
-            </ul>
             <table className="record-table">
               <caption className="sr-only">Partner shares</caption>
               <thead>
@@ -907,7 +894,13 @@ function Dashboard({ tables, showProfit, onLoadSample, onImport }: { tables: Loc
         )}
         <div className="panel">
           <h2>Stock</h2>
-          <ul className="stock-list">{view.stock.map((item) => <li key={item.code} data-status={item.status}>{item.code}: {item.qty} pcs {item.status}</li>)}</ul>
+          {view.stock.filter((item) => item.status === 'LOW' || item.status === 'OUT').length === 0 && <p className="quiet">Stock is OK.</p>}
+          <ul className="stock-list">{view.stock.filter((item) => item.status === 'LOW' || item.status === 'OUT').map((item) => {
+            const product = tables.products.find((row) => String(row.code) === item.code)
+            const label = `${item.code}: ${item.qty} pcs ${item.status}`
+            return <li key={item.code} data-status={item.status}>{product ? <Link to={`/products?product=${product.id}`}>{label}</Link> : label}</li>
+          })}</ul>
+          <Link to="/products">All products</Link>
         </div>
       </div>
       <div className="panel chart">
@@ -917,56 +910,42 @@ function Dashboard({ tables, showProfit, onLoadSample, onImport }: { tables: Loc
             <CartesianGrid vertical={false} stroke="#e0e7ff" />
             <XAxis dataKey="month" tickLine={false} axisLine={false} />
             <YAxis tickLine={false} axisLine={false} width={48} />
-            <Tooltip cursor={{ fill: 'rgba(49, 46, 129, 0.08)' }} formatter={(value, name) => name === 'Margin %' ? `${value}%` : `€${Number(value).toFixed(2)}`} />
+            <Tooltip cursor={{ fill: 'rgba(49, 46, 129, 0.08)' }} formatter={(value) => centsToEuros(Math.round(Number(value) * 100))} />
             <Legend />
             <Bar dataKey="sales" name="Sales" fill="#312e81" radius={[6, 6, 0, 0]} barSize={18} isAnimationActive={false} />
             <Bar dataKey="profit" name="Profit" fill="#059669" radius={[6, 6, 0, 0]} barSize={18} isAnimationActive={false} />
             <Bar dataKey="expenses" name="Expenses" fill="#b45309" radius={[6, 6, 0, 0]} barSize={18} isAnimationActive={false} />
-            <Line dataKey="margin" name="Margin %" stroke="#0f766e" strokeWidth={2} dot={false} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      {onLoadSample && (
-        <section className="panel data-tools">
+      {canBackup && <section className="panel data-tools">
           <h2>Business data</h2>
-          <p className="quiet">Save a copy, or replace the current business. Replacing asks you to confirm first.</p>
+          <p className="quiet">Save a copy of the current business. Replacing the books is in Settings.</p>
           <div className="tool-row">
             <button type="button" className="btn-ghost" onClick={downloadBackup}>Download monthly backup</button>
-            <label className="btn-ghost file-btn">Restore backup
-              <input aria-label="Restore backup" className="sr-only" type="file" accept=".xlsx,.xls" onChange={(event) => {
-                const file = event.target.files?.[0] ?? null
-                event.currentTarget.value = ''
-                if (file) setRestoreFile(file)
-              }} />
-            </label>
-            <button type="button" className="btn-ghost" onClick={() => setConfirmSample(true)}>Load sample data</button>
-            {onImport && (
-              <label className="btn-ghost file-btn">Import tracker workbook
-                <input aria-label="Import tracker workbook" className="sr-only" type="file" accept=".xlsx,.xls" onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null
-                  event.currentTarget.value = ''
-                  if (file) setImportFile(file)
-                }} />
-              </label>
-            )}
           </div>
           {history.length > 0 && (
             <ul className="record-list">
               {history.map((item) => <li key={`${item.at}-${item.name}`}><span>{item.name}</span><span className="quiet">{item.at.slice(0, 10)} · {item.status}</span></li>)}
             </ul>
           )}
-        </section>
-      )}
+        </section>}
     </section>
   )
 }
 
-function Card({ label, value, note, tone }: { label: string; value: string; note?: string; tone: 'brand' | 'ok' | 'danger' }) {
-  return <article className="metric" data-tone={tone}><span>{label}</span><strong className="money">{value}</strong>{note && <small className="quiet">{note}</small>}</article>
+function Card({ label, value, note, tone, to }: { label: string; value: string; note?: string; tone: 'brand' | 'ok' | 'danger'; to?: string }) {
+  const card = <article className="metric" data-tone={tone}><span>{label}</span><strong className="money">{value}</strong>{note && <small className="quiet">{note}</small>}</article>
+  return to ? <Link className="metric-link" to={to}>{card}</Link> : card
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="control-line">{label}{children}</label>
+}
+
+function withChoice(options: string[], current?: string) {
+  if (current && !options.includes(current)) return [current, ...options]
+  return options
 }
 
 const productSchema = z.object({
@@ -1004,12 +983,22 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
   const blankProduct = { code: '', name: '', category: '', colour: '', model: '', barcode: '', sellPrice: '', alertLevel: '10' }
   const form = useForm({ resolver: zodResolver(productSchema), defaultValues: blankProduct })
   useEffect(() => {
+    if (params.get('new') === '1') {
+      setEditingId('')
+      setPhoto(null)
+      form.reset(blankProduct)
+      setProductOpen(true)
+      setParams({}, { replace: true })
+      return
+    }
     const id = params.get('product')
     if (!id || !tables.products.some((row) => row.id === id)) return
     setPreviewId(id)
     setParams({}, { replace: true })
   }, [params, setParams, tables.products])
   const categories = [...new Set(tables.products.map((row) => String(row.category ?? '')).filter(Boolean))]
+  const categoryChoices = withChoice(settingList(tables.settings, 'categories', categories.length > 0 ? categories : ['Cases', 'Chargers', 'Cables', 'Protection']), form.watch('category'))
+  const colourChoices = withChoice(settingList(tables.settings, 'colours', ['Black', 'White', 'Clear']), form.watch('colour'))
   const stockByCode = new Map(summary.stock.map((item) => [item.code, item]))
   const visible = filterProducts(tables.products.map((row) => ({
     ...row,
@@ -1121,11 +1110,13 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
         })}>
           <Field label="Code"><input placeholder="Code" className="control" {...form.register('code')} /></Field>
           <Field label="Product name"><input placeholder="Name" className="control" {...form.register('name')} /></Field>
-          <Field label="Product category"><input placeholder="Category" className="control" {...form.register('category')} /></Field>
-          <Field label="Colour"><input placeholder="Colour" className="control" {...form.register('colour')} /></Field>
+          <Field label="Product category"><input placeholder="Category" className="control" list="product-categories" {...form.register('category')} /></Field>
+          <datalist id="product-categories">{categoryChoices.map((item) => <option key={item} value={item} />)}</datalist>
+          <Field label="Colour"><input placeholder="Colour" className="control" list="product-colours" {...form.register('colour')} /></Field>
+          <datalist id="product-colours">{colourChoices.map((item) => <option key={item} value={item} />)}</datalist>
           <Field label="Model"><input placeholder="Model" className="control" {...form.register('model')} /></Field>
           <Field label="Barcode"><input placeholder="Barcode" className="control" {...form.register('barcode')} /></Field>
-          <Field label="Selling price"><input placeholder="Selling price" className="control" {...form.register('sellPrice')} /></Field>
+          <Field label="Selling price (EUR)"><input placeholder="Selling price" className="control" {...form.register('sellPrice')} /></Field>
           <Field label="Alert level"><input placeholder="Alert level" className="control" {...form.register('alertLevel')} /></Field>
           <label className="control-line">Photo
             <input aria-label="Photo" type="file" accept="image/*" className="control" onChange={(event) => {
@@ -1247,7 +1238,16 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
   const shops = rows.map((row) => ({ id: String(row.id), shop_name: String(row.shop_name ?? row.name ?? ''), nif: row.nif == null ? null : String(row.nif), phone: row.phone == null ? null : String(row.phone) }))
   const warning = table === 'customers' ? duplicateWarning(shops, { nif: draft.nif, phone: draft.phone }) : ''
   const groups = table === 'customers' && canMerge ? duplicateGroups(shops) : []
-  const labels = { shop_name: 'Shop name', phone: 'Phone', nif: 'NIF', credit_limit: 'Credit limit', name: 'Name', country: 'Country' } as Record<string, string>
+  const [params, setParams] = useSearchParams()
+  useEffect(() => {
+    if (params.get('new') !== '1') return
+    setEditingId('')
+    setDraft({})
+    setError('')
+    setOpen(true)
+    setParams({}, { replace: true })
+  }, [params, setParams])
+  const labels = { shop_name: 'Shop name', phone: 'Phone', nif: 'NIF', city: 'City', email: 'Email', address: 'Address', credit_limit: 'Credit limit (EUR)', name: 'Name', country: 'Country' } as Record<string, string>
   const fieldValue = (row: Record<string, unknown>, field: string) => field === 'credit_limit' ? (row.credit_limit == null ? '' : String(Number(row.credit_limit) / 100)) : (row[field] == null ? '' : String(row[field]))
   const owed = (id: string) => {
     const row = rows.find((item) => item.id === id)
@@ -1325,29 +1325,46 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
         await onSaved()
       }} onChanged={onSaved} />
       {error && !open && <p className="error">{error}</p>}
-      <ul className="record-list">{rows.map((row) => {
-        const label = [fields.filter((field) => field !== 'credit_limit').map((field) => String(row[field] ?? '')).filter(Boolean).join(' · '), detail?.(row)].filter(Boolean).join(' · ')
-        return (
-          <li key={String(row.id)}>
-            <span>{label}{table === 'customers' && <Link to={`/customers/${String(row.id)}`}>Open {String(row.shop_name)}</Link>}</span>
-            <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => {
-              setEditingId(String(row.id))
-              setDraft(Object.fromEntries(fields.map((field) => [field, fieldValue(row, field)])))
-              setError('')
-              setOpen(true)
-            }} onArchive={() => {
-              const block = archiveBlock({
-                blocked: owed(String(row.id)) > 0,
-                isSuperAdmin,
-                message: table === 'customers' ? 'This shop still has an open invoice.' : 'We still owe this supplier.',
-              })
-              if (block) { setError(block); return }
-              setError('')
-              setArchiveId(String(row.id))
-            }} />
-          </li>
-        )
-      })}</ul>
+      {rows.length === 0 && <p className="quiet">No {title.toLowerCase()} yet.</p>}
+      <RecordTable
+        caption={title}
+        headers={table === 'customers' ? ['Shop', 'Phone', 'City', 'Owed', 'Last order', ''] : ['Name', 'Phone', 'Country', 'Balance', '']}
+        rows={rows.map((row) => {
+          const actions = <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => {
+            setEditingId(String(row.id))
+            setDraft(Object.fromEntries(fields.map((field) => [field, fieldValue(row, field)])))
+            setError('')
+            setOpen(true)
+          }} onArchive={() => {
+            const block = archiveBlock({
+              blocked: owed(String(row.id)) > 0,
+              isSuperAdmin,
+              message: table === 'customers' ? 'This shop still has an open invoice.' : 'We still owe this supplier.',
+            })
+            if (block) { setError(block); return }
+            setError('')
+            setArchiveId(String(row.id))
+          }} />
+          if (table === 'customers') {
+            const last = sales.filter((sale) => sale.customer_id === row.id).map((sale) => String(sale.date ?? '')).filter(Boolean).sort().at(-1)
+            return {
+              key: String(row.id),
+              cells: [
+                <Link key="shop" to={`/customers/${String(row.id)}`} aria-label={`Open ${String(row.shop_name ?? '')}`}>{String(row.shop_name ?? '')}</Link>,
+                String(row.phone ?? ''),
+                String(row.city ?? ''),
+                centsToEuros(owed(String(row.id))),
+                last ? last.slice(0, 10) : '—',
+                actions,
+              ],
+            }
+          }
+          return {
+            key: String(row.id),
+            cells: [String(row.name ?? ''), String(row.phone ?? ''), String(row.country ?? ''), detail?.(row) ?? '', actions],
+          }
+        })}
+      />
       {groups.length > 0 && (
         <div className="panel">
           <h2>Possible duplicates</h2>
@@ -1390,6 +1407,20 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
   const [preview, setPreview] = useState<{ table: 'customer_payments' | 'supplier_payments'; id: string } | null>(null)
   const [archive, setArchive] = useState<{ table: 'customer_payments' | 'supplier_payments'; id: string } | null>(null)
   const [invoiceFilter, setInvoiceFilter] = useState('All')
+  const [payParams, setPayParams] = useSearchParams()
+  const methods = settingList(tables.settings, 'payment_methods', ['Cash', 'Bank Transfer', 'MB Way', 'Card', 'Cheque'])
+  const overdueDays = settingNumber(tables.settings, 'overdue_days', 30)
+  useEffect(() => {
+    if (payParams.get('new') !== '1' && !payParams.get('customer')) return
+    const customer = payParams.get('customer')
+    if (customer) {
+      sessionStorage.setItem('hak.payCustomer', customer)
+      setCustomerId(customer)
+    }
+    if (payParams.get('kind') === 'supplier') setKind('supplier')
+    if (payParams.get('new') === '1') { setEditing(null); setAmountValue(''); setOpen(true) }
+    setPayParams({}, { replace: true })
+  }, [payParams, setPayParams])
   const selectedCustomer = tables.customers.some((row) => row.id === customerId) ? customerId : String(tables.customers[0]?.id ?? '')
   const selectedSupplier = tables.suppliers.some((row) => row.id === paySupplierId) ? paySupplierId : String(tables.suppliers[0]?.id ?? '')
   const chooseCustomer = (id: string) => {
@@ -1408,14 +1439,23 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
     lines: tables.sale_lines.map((row) => ({ sale_id: String(row.sale_id), qty: Number(row.qty), unit_price: Number(row.unit_price), discount: Number(row.discount ?? 0) })),
     allocations: tables.payment_allocations.map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
     today,
+    overdueDays,
   })
   const shopName = (id: string) => shopLabel(tables.customers.find((row) => row.id === id)?.shop_name)
+  const clearing = standings.filter((invoice) => invoice.customerId === selectedCustomer && invoice.status !== 'Paid')
   const visibleInvoices = standings.filter((invoice) => invoiceFilter === 'Overdue' ? invoice.overdue : invoiceFilter === 'All' ? true : invoice.status === invoiceFilter)
   return (
     <section className="page">
       <div className="page-head">
         <div><h1>Payments</h1><p className="lede">Customer cash is applied to the oldest open invoice first.</p></div>
-        {canManage && <button type="button" className="btn" onClick={() => { setEditing(null); setKind('customer'); setAmountValue(''); setReason(''); setWarning(''); setOpen(true) }}>New payment</button>}
+        <div className="quick-actions">
+          <div className="tabs">
+            <button type="button" className={kind === 'customer' ? 'active' : ''} aria-pressed={kind === 'customer'} onClick={() => setKind('customer')}>Customer</button>
+            <button type="button" className={kind === 'supplier' ? 'active' : ''} aria-pressed={kind === 'supplier'} onClick={() => setKind('supplier')}>Supplier</button>
+          </div>
+          {canManage && kind === 'customer' && <button type="button" className="btn" onClick={() => { setEditing(null); setKind('customer'); setAmountValue(''); setReason(''); setWarning(''); setOpen(true) }}>New payment</button>}
+          {canManagePurchases && kind === 'supplier' && <button type="button" className="btn" onClick={() => { setEditing(null); setKind('supplier'); setAmountValue(''); setReason(''); setWarning(''); setOpen(true) }}>New supplier payment</button>}
+        </div>
       </div>
       <Popup title={editing ? 'Edit payment' : 'New payment'} open={open} onClose={() => setOpen(false)}>
       <form className="form-grid" onSubmit={async (event) => {
@@ -1431,7 +1471,7 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
         const fx = Number(form.get('fx_rate') || 1)
         if (kind === 'supplier') {
           const paymentId = editing?.table === 'supplier_payments' ? editing.id : uuidv7()
-          await saveLocal('supplier_payments', { ...(existing ?? {}), id: paymentId, supplier_id: selectedSupplier, paid_by: form.get('paid_by'), amount, currency, fx_rate: String(fx), amount_eur: currency === 'EUR' ? amount : fxToEurCents(amount, fx), method: 'Transfer', deleted_at: null })
+          await saveLocal('supplier_payments', { ...(existing ?? {}), id: paymentId, supplier_id: selectedSupplier, paid_by: form.get('paid_by'), amount, currency, fx_rate: String(fx), amount_eur: currency === 'EUR' ? amount : fxToEurCents(amount, fx), method: String(form.get('method') || 'Bank Transfer'), deleted_at: null })
         } else {
           const paymentId = editing?.table === 'customer_payments' ? editing.id : uuidv7()
           const previous = tables.payment_allocations.filter((row) => row.customer_payment_id === paymentId)
@@ -1440,9 +1480,10 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
             lines: tables.sale_lines.map((row) => ({ sale_id: String(row.sale_id), qty: Number(row.qty), unit_price: Number(row.unit_price), discount: Number(row.discount ?? 0) })),
             allocations: tables.payment_allocations.filter((row) => row.customer_payment_id !== paymentId).map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
             today,
+            overdueDays,
           })
           for (const row of previous) await saveLocal('payment_allocations', { ...row, deleted_at: new Date().toISOString() })
-          await saveLocal('customer_payments', { ...(existing ?? {}), id: paymentId, customer_id: selectedCustomer, received_by: form.get('paid_by'), amount, method: 'Cash', deleted_at: null })
+          await saveLocal('customer_payments', { ...(existing ?? {}), id: paymentId, customer_id: selectedCustomer, received_by: form.get('paid_by'), amount, method: String(form.get('method') || 'Cash'), deleted_at: null })
           const unpaid = fresh.filter((invoice) => invoice.customerId === selectedCustomer && invoice.status !== 'Paid')
           for (const row of allocationsForPayment(unpaid.map((invoice) => ({ id: invoice.id, date: invoice.date, remainingCents: invoice.totalCents - invoice.paidCents })), amount)) {
             await saveLocal('payment_allocations', { id: uuidv7(), customer_payment_id: paymentId, sale_id: row.saleId, amount: row.amountCents })
@@ -1453,12 +1494,13 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
         await onSaved()
       }}>
         <Field label="Payment type"><select name="kind" aria-label="Payment type" className="control" value={kind} onChange={(event) => setKind(event.target.value)}><option value="customer">Customer payment</option><option value="supplier">Supplier payment</option></select></Field>
-        <Field label="Shop"><select name="customer_id" aria-label="Shop" className="control" value={selectedCustomer} onChange={(event) => chooseCustomer(event.target.value)}>{tables.customers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.shop_name)}</option>)}</select></Field>
-        <p className="lede">Paying {shopName(selectedCustomer)}</p>
-        <Field label="Supplier"><select name="supplier_id" aria-label="Supplier" className="control" value={selectedSupplier} onChange={(event) => chooseSupplier(event.target.value)}>{tables.suppliers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
-        <p className="lede">{supplierName} · We owe {centsToEuros(supplierBalance.owedCents)}</p>
+        <Field label="Method"><select name="method" aria-label="Method" className="control" defaultValue={kind === 'supplier' ? 'Bank Transfer' : 'Cash'}>{methods.map((item) => <option key={item}>{item}</option>)}</select></Field>
+        {kind === 'customer' && <Field label="Shop"><select name="customer_id" aria-label="Shop" className="control" value={selectedCustomer} onChange={(event) => chooseCustomer(event.target.value)}>{tables.customers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.shop_name)}</option>)}</select></Field>}
+        {kind === 'customer' && <p className="lede">Paying {shopName(selectedCustomer)}. This payment clears {clearing.length === 0 ? 'no open invoice' : clearing.map((invoice) => invoice.invoiceNo).join(', ')}.</p>}
+        {kind === 'supplier' && <Field label="Supplier"><select name="supplier_id" aria-label="Supplier" className="control" value={selectedSupplier} onChange={(event) => chooseSupplier(event.target.value)}>{tables.suppliers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>}
+        {kind === 'supplier' && <p className="lede">{supplierName} · We owe {centsToEuros(supplierBalance.owedCents)}</p>}
         <Field label="Recorded by"><select name="paid_by" aria-label="Recorded by" className="control">{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
-        <Field label="Amount"><input name="amount" required placeholder="Amount" aria-label="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
+        <Field label="Amount (EUR)"><input name="amount" required placeholder="Amount" aria-label="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
         <Field label="Currency"><input name="currency" placeholder="Currency" aria-label="Currency" defaultValue="EUR" className="control" /></Field>
         <Field label="FX rate"><input name="fx_rate" placeholder="FX rate" aria-label="FX rate" defaultValue="1" className="control" /></Field>
         {editing && editReasonGate(String((editing.table === 'supplier_payments' ? tables.supplier_payments : tables.customer_payments).find((row) => row.id === editing.id)?.created_at ?? ''), lisbonToday(), reason).needsReason && (
@@ -1470,13 +1512,13 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
         <button className="btn">{editing ? 'Save changes' : 'Save payment'}</button>
       </form>
       </Popup>
-      <h2>Invoices</h2>
-      <label className="control-line">Invoice status
+      {kind === 'customer' && <h2>Invoices</h2>}
+      {kind === 'customer' && <label className="control-line">Invoice status
         <select aria-label="Invoice status" className="control" value={invoiceFilter} onChange={(event) => setInvoiceFilter(event.target.value)}>
           {['All', 'Unpaid', 'Part-paid', 'Paid', 'Overdue'].map((item) => <option key={item}>{item}</option>)}
         </select>
-      </label>
-      <RecordTable
+      </label>}
+      {kind === 'customer' && <RecordTable
         caption="Invoices"
         headers={['Shop', 'Invoice', 'Status', 'Left']}
         statusColumn={-1}
@@ -1487,32 +1529,32 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
             cells: [shopName(invoice.customerId), invoice.invoiceNo, invoice.overdue ? `${invoice.status} · Overdue` : invoice.status, `${centsToEuros(left)} left`],
           }
         })}
-      />
-      <h2>Suppliers</h2>
-      <ul className="record-list">
+      />}
+      {kind === 'supplier' && <h2>Suppliers</h2>}
+      {kind === 'supplier' && <ul className="record-list">
         {tables.suppliers.map((supplier) => {
           const money = supplierMoney({ supplierId: String(supplier.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
           return <li key={String(supplier.id)}>{String(supplier.name)} · We owe {centsToEuros(money.owedCents)}</li>
         })}
-      </ul>
-      <h2>Customer payments</h2>
-      <ul className="record-list">
+      </ul>}
+      {kind === 'customer' && <h2>Customer payments</h2>}
+      {kind === 'customer' && <ul className="record-list">
         {tables.customer_payments.map((row) => (
           <li key={String(row.id)}>
             <span>Payment · {shopName(String(row.customer_id))} · {centsToEuros(Number(row.amount))}</span>
             <RowActions canWrite={canManage} onPreview={() => setPreview({ table: 'customer_payments', id: String(row.id) })} onEdit={() => { setEditing({ table: 'customer_payments', id: String(row.id) }); setKind('customer'); chooseCustomer(String(row.customer_id)); setAmountValue(String(Number(row.amount) / 100)); setReason(''); setOpen(true) }} onArchive={() => setArchive({ table: 'customer_payments', id: String(row.id) })} />
           </li>
         ))}
-      </ul>
-      <h2>Supplier payments</h2>
-      <ul className="record-list">
+      </ul>}
+      {kind === 'supplier' && <h2>Supplier payments</h2>}
+      {kind === 'supplier' && <ul className="record-list">
         {tables.supplier_payments.map((row) => (
           <li key={String(row.id)}>
             <span>Payment · {String(tables.suppliers.find((supplier) => supplier.id === row.supplier_id)?.name ?? 'Supplier')} · {centsToEuros(Number(row.amount_eur ?? row.amount))}</span>
             <RowActions canWrite={canManagePurchases} onPreview={() => setPreview({ table: 'supplier_payments', id: String(row.id) })} onEdit={() => { setEditing({ table: 'supplier_payments', id: String(row.id) }); setKind('supplier'); chooseSupplier(String(row.supplier_id)); setAmountValue(String(Number(row.amount) / 100)); setReason(''); setOpen(true) }} onArchive={() => setArchive({ table: 'supplier_payments', id: String(row.id) })} />
           </li>
         ))}
-      </ul>
+      </ul>}
       <Popup title="Payment" open={preview != null} onClose={() => setPreview(null)}>
         {preview?.table === 'customer_payments' && tables.customer_payments.filter((row) => row.id === preview.id).map((row) => {
           const recorder = String(tables.partners.find((partner) => partner.id === row.received_by)?.name ?? 'Unknown')
@@ -1581,6 +1623,16 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
   const [reason, setReason] = useState('')
   const [warning, setWarning] = useState('')
   const [receipt, setReceipt] = useState<string | null>(null)
+  const [expenseParams, setExpenseParams] = useSearchParams()
+  const expenseCategories = withChoice(settingList(tables.settings, 'expense_categories', ['Rent', 'Freight', 'Utilities', 'Other']), category)
+  useEffect(() => {
+    if (expenseParams.get('new') !== '1') return
+    setEditingId('')
+    setCategory('')
+    setAmountValue('')
+    setOpen(true)
+    setExpenseParams({}, { replace: true })
+  }, [expenseParams, setExpenseParams])
   const partnerName = (id: unknown) => String(tables.partners.find((row) => row.id === id)?.name ?? 'Partner')
   const preview = tables.expenses.find((row) => row.id === previewId)
   const archive = tables.expenses.find((row) => row.id === archiveId)
@@ -1626,8 +1678,9 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
           setOpen(false)
           await onSaved()
         }}>
-          <Field label="Category"><input name="category" required placeholder="Category" className="control" value={category} onChange={(event) => setCategory(event.target.value)} /></Field>
-          <Field label="Amount"><input name="amount" required placeholder="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
+          <Field label="Category"><input name="category" aria-label="Category" required placeholder="Category" className="control" list="expense-categories" value={category} onChange={(event) => setCategory(event.target.value)} /></Field>
+          <datalist id="expense-categories">{expenseCategories.map((item) => <option key={item} value={item} />)}</datalist>
+          <Field label="Amount (EUR)"><input name="amount" required placeholder="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
           <Field label="Paid by"><select name="paid_by" aria-label="Paid by" className="control" value={paidBy || String(tables.partners[0]?.id ?? '')} onChange={(event) => setPaidBy(event.target.value)}>{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
           <label className="control-line">Receipt
             <input aria-label="Receipt" type="file" accept="image/*" className="control" onChange={(event) => {
@@ -1709,7 +1762,7 @@ function TransferEntry({ tables, canManage = true, onSaved }: { tables: LocalTab
         }}>
           <Field label="From"><select name="from_partner" aria-label="From" className="control" value={fromId || String(tables.partners[0]?.id ?? '')} onChange={(event) => setFromId(event.target.value)}>{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
           <Field label="To"><select name="to_partner" aria-label="To" className="control" value={toId || String(tables.partners[1]?.id ?? tables.partners[0]?.id ?? '')} onChange={(event) => setToId(event.target.value)}>{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
-          <Field label="Amount"><input name="amount" required placeholder="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
+          <Field label="Amount (EUR)"><input name="amount" required placeholder="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
           {editingId && editReasonGate(String(tables.partner_transfers.find((row) => row.id === editingId)?.created_at ?? ''), lisbonToday(), reason).needsReason && (
             <label className="control-line">Reason<input aria-label="Change reason" className="control" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
           )}

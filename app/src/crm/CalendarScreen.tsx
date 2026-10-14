@@ -24,7 +24,7 @@ export function CalendarScreen({ tables }: { tables: LocalTables }) {
   const currentYear = Number(today.slice(0, 4))
   const minMonth = `${currentYear - 1}-01`
   const maxMonth = `${currentYear}-12`
-  const [mode, setMode] = useState<'Year' | 'Month' | 'Day'>('Year')
+  const [mode, setMode] = useState<'Year' | 'Month' | 'Day'>('Month')
   const [year, setYear] = useState(currentYear)
   const [cursor, setCursor] = useState(today.slice(0, 7))
   const [day, setDay] = useState(today)
@@ -63,23 +63,13 @@ export function CalendarScreen({ tables }: { tables: LocalTables }) {
           </div>
           <div className="year-grid">
             {MONTHS.map((label, index) => {
-              const count = daysInMonth(year, index + 1)
+              const month = `${year}-${String(index + 1).padStart(2, '0')}`
+              const count = events.filter((event) => event.date.startsWith(month)).length
               return (
-                <section key={label} className="panel">
+                <button key={label} type="button" className="panel" onClick={() => { setCursor(month); setMode('Month') }}>
                   <h3>{label}</h3>
-                  <div className="month-days">
-                    {Array.from({ length: count }, (_, offset) => {
-                      const date = `${year}-${String(index + 1).padStart(2, '0')}-${String(offset + 1).padStart(2, '0')}`
-                      const items = events.filter((event) => event.date === date)
-                      return (
-                        <div key={date} className="day-cell" data-date={date} data-today={date === today ? 'true' : undefined}>
-                          <button type="button" className="btn-ghost" onClick={() => openDay(date)}>{offset + 1}</button>
-                          {items.map((item) => <Link key={item.label} to={item.href}>{item.label}</Link>)}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </section>
+                  <p className="quiet">{count === 0 ? 'No events' : `${count} events`}</p>
+                </button>
               )
             })}
           </div>

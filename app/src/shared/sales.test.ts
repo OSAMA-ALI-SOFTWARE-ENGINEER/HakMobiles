@@ -12,7 +12,7 @@ describe('multi-line sales', () => {
       { productId: 'a', name: 'Line item', qty: 2, onHand: 0 },
       { productId: 'a', name: 'Line item', qty: 1, onHand: 0 },
     ])).toBe('Stock warning: Line item has 0 in stock and this sale asks for 3.')
-    expect(creditWarningText(0, total, 5000)).toContain('above the €50.00 credit limit')
+    expect(creditWarningText(0, total, 5000)).toContain('above the € 50,00 credit limit')
     expect(creditWarningText(0, total, null)).toBe('')
   })
 

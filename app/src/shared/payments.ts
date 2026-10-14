@@ -25,6 +25,7 @@ export function invoiceStandings(input: {
   lines: { sale_id: string; qty: number; unit_price: number; discount?: number | null }[]
   allocations: { sale_id: string; amount: number }[]
   today: string
+  overdueDays?: number
 }): InvoiceStanding[] {
   return input.sales.map((sale) => {
     const totalCents = input.lines.reduce((total, line) => {
@@ -42,7 +43,7 @@ export function invoiceStandings(input: {
       totalCents,
       paidCents,
       status,
-      overdue: isOverdue(date, status, input.today),
+      overdue: isOverdue(date, status, input.today, input.overdueDays ?? OVERDUE_DAYS),
     }
   })
 }

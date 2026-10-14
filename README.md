@@ -23,7 +23,7 @@ npm test --prefix app
 npm run test:e2e
 ```
 
-The Vitest golden sample must show sales €605.00, net profit €430.00, margin 71.1%, and partner balances +€40.00 / −€130.00 / +€90.00.
+The Vitest golden sample must show sales € 605,00, net profit € 430,00, margin 71.1%, and partner balances +€ 40,00 / −€ 130,00 / +€ 90,00.
 
 ## Deploy
 
