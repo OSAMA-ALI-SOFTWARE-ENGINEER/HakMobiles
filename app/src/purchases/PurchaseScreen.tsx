@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { v7 as uuidv7 } from 'uuid'
 import { loadArchived, saveLocal } from '../db/browser'
 import type { LocalTables } from '../data/ledger'
-import { centsToEuros, eurosToCents } from '../shared/money'
+import { centsToEuros, parseEuros } from '../shared/money'
 import { landedUnitCosts, onOrderQty, purchaseLedgerRows, purchaseStatus, supplierMoney } from '../shared/purchases'
 import { editReasonGate } from '../shared/records'
 import { lisbonToday } from '../shared/sales'
@@ -28,6 +29,13 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
   const [shipping, setShipping] = useState('')
   const [extras, setExtras] = useState<DraftLine[]>([])
   const [open, setOpen] = useState(false)
+  const [purchaseParams, setPurchaseParams] = useSearchParams()
+  useEffect(() => {
+    if (purchaseParams.get('new') !== '1') return
+    setEditingId('')
+    setOpen(true)
+    setPurchaseParams({}, { replace: true })
+  }, [purchaseParams, setPurchaseParams])
   const [editingId, setEditingId] = useState('')
   const [previewId, setPreviewId] = useState('')
   const [orderDate, setOrderDate] = useState(lisbonToday())
@@ -41,8 +49,8 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
     ...extras,
   ].filter((line) => Number(line.qty) > 0)
   const landed = landedUnitCosts(
-    draft.map((line) => ({ qty: Number(line.qty), unitCostCents: eurosToCents(Number(line.cost || 0)) })),
-    eurosToCents(Number(shipping || 0)),
+    draft.map((line) => ({ qty: Number(line.qty), unitCostCents: parseEuros(line.cost) ?? 0 })),
+    parseEuros(shipping) ?? 0,
     'quantity',
   )
   const ordered = draft.reduce((sum, line) => sum + Number(line.qty), 0)
@@ -112,10 +120,19 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
           return
         }
         const lines = [
-          { productId: selectedProduct, qty: Number(qty), received: received === '' ? Number(qty) : Number(received), unitCostCents: eurosToCents(Number(cost || 0)) },
-          ...extras.map((line) => ({ productId: line.productId, qty: Number(line.qty), received: line.received === '' ? Number(line.qty) : Number(line.received), unitCostCents: eurosToCents(Number(line.cost || 0)) })),
+          { productId: selectedProduct, qty: Number(qty), received: received === '' ? Number(qty) : Number(received), unitCostCents: parseEuros(cost) },
+          ...extras.map((line) => ({ productId: line.productId, qty: Number(line.qty), received: line.received === '' ? Number(line.qty) : Number(line.received), unitCostCents: parseEuros(line.cost) })),
         ].filter((line) => line.qty > 0 && line.productId)
         if (lines.length === 0) return
+        if (lines.some((line) => line.unitCostCents == null)) {
+          setWarning('Enter the cost per piece in euros, for example 1,20.')
+          return
+        }
+        const shippingCents = shipping.trim() === '' ? 0 : parseEuros(shipping)
+        if (shippingCents == null) {
+          setWarning('Enter shipping in euros, for example 20,00.')
+          return
+        }
         const purchaseId = editingId || uuidv7()
         const existing = tables.purchases.find((row) => row.id === purchaseId)
         if (existing) {
@@ -128,18 +145,23 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
           id: purchaseId,
           supplier_id: selectedSupplier,
           date: existing ? orderDate : today,
-          extra_cost: eurosToCents(Number(shipping || 0)),
+          extra_cost: shippingCents,
           deleted_at: null,
         })
-        for (const line of lines) {
-          await saveLocal('purchase_lines', {
-            id: uuidv7(),
-            purchase_id: purchaseId,
-            product_id: line.productId,
-            qty: line.qty,
-            qty_received: line.received,
-            unit_cost: line.unitCostCents,
-          })
+        try {
+          for (const line of lines) {
+            await saveLocal('purchase_lines', {
+              id: uuidv7(),
+              purchase_id: purchaseId,
+              product_id: line.productId,
+              qty: line.qty,
+              qty_received: line.received,
+              unit_cost: line.unitCostCents ?? 0,
+            })
+          }
+        } catch (error) {
+          setWarning(error instanceof Error ? error.message : 'Could not save this purchase.')
+          return
         }
         resetForm()
         setOpen(false)
@@ -167,7 +189,8 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
           </div>
         ))}
         <button type="button" className="btn-ghost" onClick={() => setExtras((current) => [...current, { productId: selectedProduct, qty: '1', cost: '', received: '' }])}>Add line</button>
-        <label className="control-line">Shipping<input name="shipping" aria-label="Shipping" placeholder="Shipping" className="control" value={shipping} onChange={(event) => setShipping(event.target.value)} /></label>
+        <label className="control-line">Shipping (EUR)<input name="shipping" aria-label="Shipping" placeholder="Shipping" className="control" value={shipping} onChange={(event) => setShipping(event.target.value)} /></label>
+        <p className="quiet">Euros. Spread across the lines by quantity.</p>
         {draft.length > 0 && <p className="lede">Landed cost {centsToEuros(landed[0] ?? 0)} per piece · {purchaseStatus(ordered, arrived)} · {onOrderQty(ordered, arrived)} on order</p>}
         {editingId && reasonGate.needsReason && (
           <label className="control-line">Reason

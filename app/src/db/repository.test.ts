@@ -20,4 +20,27 @@ describe('repository', () => {
     expect(readTable(sql, 'products')).toHaveLength(0)
     expect(readOutbox(sql)).toHaveLength(0)
   })
+
+  it('stores a purchase line cost and refuses a blank one', () => {
+    const sql = createNodeSql()
+    migrate(sql)
+    saveRecord(sql, 'purchase_lines', {
+      id: 'line-1',
+      purchase_id: 'buy-1',
+      product_id: 'p1',
+      qty: 4,
+      qty_received: 4,
+      unit_cost: 120,
+    }, 'op-line')
+
+    expect(readTable(sql, 'purchase_lines')[0]?.unit_cost).toBe(120)
+    expect(() => saveRecord(sql, 'purchase_lines', {
+      id: 'line-2',
+      purchase_id: 'buy-1',
+      product_id: 'p1',
+      qty: 4,
+      qty_received: 4,
+      unit_cost: Number.NaN,
+    }, 'op-blank')).toThrow(/NOT NULL/)
+  })
 })

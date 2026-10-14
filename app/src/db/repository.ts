@@ -20,7 +20,11 @@ export function saveStatements(table: string, row: Record<string, unknown>, opId
     },
     {
       sql: `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${updates}`,
-      params: columns.map((column) => record[column] ?? null),
+      params: columns.map((column) => {
+        const value = record[column]
+        if (typeof value === 'number' && !Number.isFinite(value)) return null
+        return value ?? null
+      }),
     },
   ]
 }
