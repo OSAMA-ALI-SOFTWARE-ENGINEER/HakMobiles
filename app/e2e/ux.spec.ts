@@ -11,7 +11,10 @@ async function signIn(page: Page) {
 
 async function loadSample(page: Page) {
   await page.getByRole('link', { name: 'Settings' }).click()
-  await page.getByRole('button', { name: 'Load sample data' }).click()
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  const load = page.getByRole('button', { name: 'Load sample data' })
+  await expect(load).toBeVisible()
+  await load.click()
   const saved = page.waitForResponse((response) => response.url().includes('/api/sync/sample') && response.ok())
   await page.getByRole('dialog', { name: 'Load sample data' }).getByRole('button', { name: 'Replace with sample' }).click()
   await saved
@@ -136,9 +139,11 @@ test('sample and import controls say what they replace', async ({ page }) => {
   const sales = page.getByRole('article').filter({ hasText: 'Sales' }).locator('.money')
   await expect(sales).toHaveText('€ 605,00')
   await page.getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
   await expect(page.getByLabel('Import tracker workbook')).toHaveAttribute('type', 'file')
   await page.getByRole('link', { name: 'Dashboard' }).click()
-  await expect(sales).toHaveText('€ 605,00')
+  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
+  await expect(page.getByRole('article').filter({ hasText: 'Sales' }).locator('.money')).toHaveText('€ 605,00')
 })
 
 test('a login can be found and the last super admin cannot be deactivated', async ({ page }) => {
@@ -196,8 +201,9 @@ test('the calendar shows this year and a follow-up due today', async ({ page }) 
   await page.getByLabel('Due date').fill(today)
   await page.getByRole('button', { name: 'Add follow-up' }).click()
   await page.getByRole('link', { name: 'Calendar' }).click()
-  const monthHeading = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Lisbon', month: 'long', year: 'numeric' }).format(new Date())
-  await expect(page.getByRole('heading', { name: monthHeading })).toBeVisible()
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+  const monthHeading = `${monthNames[Number(today.slice(5, 7)) - 1]} ${today.slice(0, 4)}`
+  await expect(page.getByRole('heading', { name: monthHeading, exact: true })).toBeVisible()
   await expect(page.locator(`[data-date="${today}"]`)).toContainText(title)
   await page.getByRole('button', { name: 'Day' }).click()
   await expect(page.getByRole('region', { name: 'Day' })).toContainText(title)

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { parseEuros } from '../src/shared/money'
 import { chooseAction } from './actions'
 
 async function openForm(page: Page, name: string) {
@@ -26,10 +27,10 @@ async function chooseOption(page: Page, selector: string, label: string, storage
 }
 
 function readCents(text: string): number {
-  const match = text.match(/(-)?€([\d,]+\.\d{2})/)
-  if (!match) throw new Error(`No amount in ${text}`)
-  const cents = Math.round(Number(match[2].replace(/,/g, '')) * 100)
-  return match[1] ? -cents : cents
+  const match = text.match(/-?\s*€\s*[\d.]+,\d{2}/)
+  const cents = match ? parseEuros(match[0]) : null
+  if (cents == null) throw new Error(`No amount in ${text}`)
+  return cents
 }
 
 async function netCents(page: Page) {
@@ -37,11 +38,16 @@ async function netCents(page: Page) {
 }
 
 async function partnerCents(page: Page, name: string) {
-  const text = await page.locator('.partner-list li').filter({ hasText: `${name}:` }).innerText()
-  const match = text.match(/balance (-)?€([\d,]+\.\d{2})/)
-  if (!match) throw new Error(text)
-  const cents = Math.round(Number(match[2].replace(/,/g, '')) * 100)
-  return match[1] ? -cents : cents
+  const sentence = page.locator('.partner-panel .quiet')
+  await expect(sentence).toBeVisible()
+  const text = await sentence.innerText()
+  if (text.includes('Partners are settled')) return 0
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const owes = text.match(new RegExp(`${escaped} owes (€\\s*[\\d.]+,\\d{2})`))
+  if (owes) return -readCents(owes[1])
+  const owed = text.match(new RegExp(`(€\\s*[\\d.]+,\\d{2}) to ${escaped}(?= and |\\.|$)`))
+  if (owed) return readCents(owed[1])
+  return 0
 }
 
 test('a stock adjustment can be previewed, edited, and archived', async ({ page }) => {
@@ -102,7 +108,7 @@ test('editing a price fills the next sale, lands in activity, and archive remove
   await page.getByRole('link', { name: 'Sales' }).click()
   await openForm(page, 'New sale')
   await chooseOption(page, 'select[name="product_id"]', `${code} ${name}`)
-  await expect(page.locator('input[name="price"]')).toHaveValue('14')
+  await expect(page.locator('input[name="price"]')).toHaveValue('14,00')
   await page.getByRole('dialog', { name: 'New sale' }).getByRole('button', { name: 'Close' }).click()
 
   await page.getByRole('link', { name: 'Activity' }).click()
