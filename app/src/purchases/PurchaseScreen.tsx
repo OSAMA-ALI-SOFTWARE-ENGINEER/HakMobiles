@@ -11,7 +11,7 @@ import { ArchiveDialog, RowActions } from '../ui/RecordActions'
 import { ArchivedPanel } from '../ui/ArchivedPanel'
 import { RecordTable } from '../ui/RecordTable'
 import { offerUndo } from '../ui/undo'
-import { Popup } from '../ui/Popup'
+import { FactList, Popup } from '../ui/Popup'
 
 interface DraftLine {
   productId: string
@@ -201,10 +201,14 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
         <button className="btn">{editingId ? 'Save changes' : 'Save purchase'}</button>
       </form>
       </Popup>
-      <Popup title="Purchase" open={preview != null} onClose={() => setPreviewId('')}>
+      <Popup sheet title="Purchase" open={preview != null} onClose={() => setPreviewId('')}>
         {preview && (
-          <div className="form-grid">
-            <p className="lede">{String(tables.suppliers.find((row) => row.id === preview.supplier_id)?.name ?? 'Supplier')} · {String(preview.date ?? '').slice(0, 10)} · Shipping {centsToEuros(Number(preview.extra_cost ?? 0))}</p>
+          <div>
+            <FactList items={[
+              { label: 'Supplier', value: String(tables.suppliers.find((row) => row.id === preview.supplier_id)?.name ?? 'Supplier') },
+              { label: 'Date', value: String(preview.date ?? '').slice(0, 10) },
+              { label: 'Shipping', value: centsToEuros(Number(preview.extra_cost ?? 0)), wide: true },
+            ]} />
             <ul className="record-list">
               {previewLines.map((line) => (
                 <li key={line.productId}>{productName(line.productId)} · Ordered {line.qty} · Received {line.receivedQty ?? line.qty} · {centsToEuros(line.unitCostCents)} landed</li>

@@ -28,7 +28,7 @@ import { filterProducts } from './shared/products'
 import { lisbonToday } from './shared/sales'
 import { shopLabel } from './shared/labels'
 import { settingList, settingNumber } from './shared/settings'
-import { Popup } from './ui/Popup'
+import { FactList, Popup } from './ui/Popup'
 import { ArchiveDialog, RowActions } from './ui/RecordActions'
 import { RecordTable } from './ui/RecordTable'
 import { ArchivedPanel } from './ui/ArchivedPanel'
@@ -1240,15 +1240,22 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
         </form>
         </Popup>
       )}
-      <Popup title="Product" open={tables.products.some((row) => row.id === previewId)} onClose={() => setPreviewId('')}>
+      <Popup sheet title="Product" open={tables.products.some((row) => row.id === previewId)} onClose={() => setPreviewId('')}>
         {tables.products.filter((row) => row.id === previewId).map((row) => {
           const stock = stockByCode.get(String(row.code))
           return (
-            <div className="form-grid" key={String(row.id)}>
+            <div key={String(row.id)}>
               {row.photo_path ? <RecordImage path={String(row.photo_path)} token={token} alt={`${row.code} ${row.name}`} large /> : null}
-              <p className="lede">{String(row.code)} {String(row.name)} · {String(row.category ?? 'No category')} · {String(row.colour ?? '')} {String(row.model ?? '')}</p>
-              <p className="lede">Price {centsToEuros(Number(row.sell_price ?? 0))} · Alert {String(row.alert_level ?? 10)} · {stock?.qty ?? 0} pcs {stock?.status ?? 'OUT'}</p>
-              {row.barcode ? <p className="lede">Barcode {String(row.barcode)}</p> : null}
+              <FactList items={[
+                { label: 'Product', value: `${row.code} ${row.name}` },
+                { label: 'Category', value: String(row.category ?? '') },
+                { label: 'Colour', value: String(row.colour ?? '') },
+                { label: 'Model', value: String(row.model ?? '') },
+                { label: 'Price', value: centsToEuros(Number(row.sell_price ?? 0)) },
+                { label: 'Alert', value: String(row.alert_level ?? 10) },
+                { label: 'Stock', value: `${stock?.qty ?? 0} pcs ${stock?.status ?? 'OUT'}` },
+                ...(row.barcode ? [{ label: 'Barcode', value: String(row.barcode) }] : []),
+              ]} />
             </div>
           )
         })}
@@ -1301,10 +1308,16 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
         </form>
         </Popup>
       )}
-      <Popup title="Adjustment" open={tables.stock_adjustments.some((row) => row.id === adjustPreviewId)} onClose={() => setAdjustPreviewId('')}>
+      <Popup sheet title="Adjustment" open={tables.stock_adjustments.some((row) => row.id === adjustPreviewId)} onClose={() => setAdjustPreviewId('')}>
         {tables.stock_adjustments.filter((row) => row.id === adjustPreviewId).map((row) => {
           const product = tables.products.find((item) => item.id === row.product_id)
-          return <p className="lede" key={String(row.id)}>{String(product?.code ?? 'Product')} {String(product?.name ?? '')} · {String(row.qty)} · {String(row.reason)}</p>
+          return (
+            <FactList key={String(row.id)} items={[
+              { label: 'Product', value: `${product?.code ?? 'Product'} ${product?.name ?? ''}`.trim() },
+              { label: 'Quantity', value: String(row.qty ?? '') },
+              { label: 'Reason', value: String(row.reason ?? ''), wide: true },
+            ]} />
+          )
         })}
       </Popup>
       <h2>Adjustments</h2>
@@ -1416,8 +1429,23 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
         <button className="btn">{editingId ? 'Save changes' : 'Save'}</button>
       </form>
       </Popup>
-      <Popup title={singular[0].toUpperCase() + singular.slice(1)} open={preview != null} onClose={() => setPreviewId('')}>
-        {preview && <p className="lede">{fields.map((field) => `${labels[field] ?? field}: ${fieldValue(preview, field) || '—'}`).join(' · ')}{detail ? ` · ${detail(preview)}` : ''}</p>}
+      <Popup sheet title={singular[0].toUpperCase() + singular.slice(1)} open={preview != null} onClose={() => setPreviewId('')}>
+        {preview && (
+          <FactList items={[
+            ...fields.map((field) => ({
+              label: field === 'credit_limit' ? 'Credit limit' : (labels[field] ?? field),
+              value: field === 'credit_limit'
+                ? (preview.credit_limit == null || preview.credit_limit === '' ? '' : centsToEuros(Number(preview.credit_limit)))
+                : fieldValue(preview, field),
+              wide: field === 'address' || field === 'email',
+            })),
+            ...(detail ? detail(preview).split(' · ').map((part) => {
+              const amount = part.match(/€\s*[\d.,-]+/)
+              const label = amount ? part.slice(0, amount.index).trim() : 'Detail'
+              return { label: label || 'Detail', value: amount ? amount[0] : part }
+            }) : []),
+          ]} />
+        )}
         {preview && previewExtra?.(preview)}
       </Popup>
       <ArchiveDialog open={rows.some((row) => row.id === archiveId)} title={`Archive ${singular}`} needsReason={false} onClose={() => setArchiveId('')} onConfirm={async () => {
@@ -1672,13 +1700,17 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
           </li>
         ))}
       </ul>}
-      <Popup title="Payment" open={preview != null} onClose={() => setPreview(null)}>
+      <Popup sheet title="Payment" open={preview != null} onClose={() => setPreview(null)}>
         {preview?.table === 'customer_payments' && tables.customer_payments.filter((row) => row.id === preview.id).map((row) => {
           const recorder = String(tables.partners.find((partner) => partner.id === row.received_by)?.name ?? 'Unknown')
           const invoices = tables.payment_allocations.filter((item) => item.customer_payment_id === row.id)
           return (
             <div key={String(row.id)}>
-              <p className="lede">{shopName(String(row.customer_id))} · {centsToEuros(Number(row.amount))} · Recorded by {recorder}</p>
+              <FactList items={[
+                { label: 'Shop', value: shopName(String(row.customer_id)) },
+                { label: 'Amount', value: centsToEuros(Number(row.amount)) },
+                { label: 'Recorded by', value: recorder, wide: true },
+              ]} />
               <ul className="record-list">
                 {invoices.map((item) => {
                   const sale = tables.sales.find((entry) => entry.id === item.sale_id)
@@ -1690,7 +1722,12 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
           )
         })}
         {preview?.table === 'supplier_payments' && tables.supplier_payments.filter((row) => row.id === preview.id).map((row) => (
-          <p className="lede" key={String(row.id)}>{String(tables.suppliers.find((supplier) => supplier.id === row.supplier_id)?.name ?? 'Supplier')} · {centsToEuros(Number(row.amount_eur ?? row.amount))} · Recorded by {String(tables.partners.find((partner) => partner.id === row.paid_by)?.name ?? 'Unknown')} · {String(row.currency ?? 'EUR')}</p>
+          <FactList key={String(row.id)} items={[
+            { label: 'Supplier', value: String(tables.suppliers.find((supplier) => supplier.id === row.supplier_id)?.name ?? 'Supplier') },
+            { label: 'Amount', value: centsToEuros(Number(row.amount_eur ?? row.amount)) },
+            { label: 'Recorded by', value: String(tables.partners.find((partner) => partner.id === row.paid_by)?.name ?? 'Unknown') },
+            { label: 'Currency', value: String(row.currency ?? 'EUR') },
+          ]} />
         ))}
       </Popup>
       <ArchiveDialog
@@ -1822,11 +1859,16 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
           <button className="btn">{editingId ? 'Save changes' : 'Save expense'}</button>
         </form>
       </Popup>
-      <Popup title="Expense" open={preview != null} onClose={() => setPreviewId('')}>
+      <Popup sheet title="Expense" open={preview != null} onClose={() => setPreviewId('')}>
         {preview && (
-          <div className="form-grid">
+          <div>
             {preview.receipt_path ? <RecordImage path={String(preview.receipt_path)} token={token} alt={String(preview.category)} large /> : null}
-            <p className="lede">{String(preview.category)} · {centsToEuros(Number(preview.amount))} · Paid by {partnerName(preview.paid_by)} · {String(preview.created_at ?? '').slice(0, 10)}</p>
+            <FactList items={[
+              { label: 'Category', value: String(preview.category ?? '') },
+              { label: 'Amount', value: centsToEuros(Number(preview.amount)) },
+              { label: 'Paid by', value: partnerName(preview.paid_by) },
+              { label: 'Date', value: String(preview.created_at ?? '').slice(0, 10) },
+            ]} />
           </div>
         )}
       </Popup>
@@ -1900,8 +1942,14 @@ function TransferEntry({ tables, canManage = true, onSaved }: { tables: LocalTab
           <button className="btn">{editingId ? 'Save changes' : 'Save transfer'}</button>
         </form>
       </Popup>
-      <Popup title="Transfer" open={preview != null} onClose={() => setPreviewId('')}>
-        {preview && <p className="lede">{nameOf(preview.from_partner)} to {nameOf(preview.to_partner)} · {centsToEuros(Number(preview.amount))}</p>}
+      <Popup sheet title="Transfer" open={preview != null} onClose={() => setPreviewId('')}>
+        {preview && (
+          <FactList items={[
+            { label: 'From', value: nameOf(preview.from_partner) },
+            { label: 'To', value: nameOf(preview.to_partner) },
+            { label: 'Amount', value: centsToEuros(Number(preview.amount)), wide: true },
+          ]} />
+        )}
       </Popup>
       <ArchiveDialog open={archive != null} title="Archive transfer" needsReason={editReasonGate(String(archive?.created_at ?? ''), lisbonToday(), '').needsReason} onClose={() => setArchiveId('')} onConfirm={async () => {
         if (!archive) return

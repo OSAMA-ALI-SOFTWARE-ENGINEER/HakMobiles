@@ -25,7 +25,7 @@ import { ArchiveDialog, RowActions } from '../ui/RecordActions'
 import { ArchivedPanel } from '../ui/ArchivedPanel'
 import { RecordTable } from '../ui/RecordTable'
 import { offerUndo } from '../ui/undo'
-import { Popup } from '../ui/Popup'
+import { FactList, Popup } from '../ui/Popup'
 
 export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, canManageSales, canEditOwn, onSaved }: {
   tables: LocalTables
@@ -374,10 +374,14 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
         <button className="btn" disabled={busy}>{editingId ? 'Save changes' : 'Save sale'}</button>
       </form>
       </Popup>
-      <Popup title="Invoice" open={previewId !== '' && invoiceModel(previewId) != null} onClose={() => setPreviewId('')}>
+      <Popup sheet title="Invoice" open={previewId !== '' && invoiceModel(previewId) != null} onClose={() => setPreviewId('')}>
         {invoiceModel(previewId) && (
-          <div className="form-grid">
-            <p className="lede">{invoiceModel(previewId)?.invoiceNo} · {invoiceModel(previewId)?.shop} · {centsToEuros(invoiceModel(previewId)?.totalCents ?? 0)}</p>
+          <div>
+            <FactList items={[
+              { label: 'Invoice', value: invoiceModel(previewId)?.invoiceNo ?? '' },
+              { label: 'Shop', value: invoiceModel(previewId)?.shop ?? '' },
+              { label: 'Total', value: centsToEuros(invoiceModel(previewId)?.totalCents ?? 0), wide: true },
+            ]} />
             <ul className="record-list">
               {invoiceModel(previewId)?.lines.map((line, index) => <li key={`${line.name}-${index}`}>{line.name} · {line.qty} · {centsToEuros(line.unitPriceCents)}</li>)}
             </ul>
