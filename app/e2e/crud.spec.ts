@@ -283,3 +283,73 @@ test('a login can change role and a deactivated user cannot sign in', async ({ p
   await page.getByRole('dialog', { name: 'Delete permanently' }).getByRole('button', { name: 'Delete permanently' }).click()
   await expect(page.getByRole('listitem').filter({ hasText: email })).toHaveCount(0)
 })
+
+test('comma amounts save on a product, sale, payment, expense, and purchase', async ({ page }) => {
+  const stamp = Date.now()
+  const shop = `Comma Shop ${stamp}`
+  const code = `M${String(stamp).slice(-6)}`
+  const name = `Comma Item ${stamp}`
+  const supplier = `Comma Supplier ${stamp}`
+  await signIn(page, 'haseeb@hak.test', 'ChangeMe123!')
+  await expect(page.locator('.status')).toContainText('Synced', { timeout: 20_000 })
+
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByRole('button', { name: 'Remove Cases' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Remove Cash' })).toBeVisible()
+
+  await page.getByRole('link', { name: 'Customers' }).click()
+  await openForm(page, 'New customer')
+  await page.getByLabel('Shop name').fill(shop)
+  await page.getByRole('button', { name: 'Save' }).click()
+
+  await page.getByRole('link', { name: 'Products' }).click()
+  await openForm(page, 'New product')
+  await page.getByRole('textbox', { name: 'Code', exact: true }).fill(code)
+  await page.getByPlaceholder('Name').fill(name)
+  await page.getByPlaceholder('Selling price').fill('8,50')
+  await page.getByRole('button', { name: 'Save product' }).click()
+  const product = page.getByRole('row').filter({ hasText: `${code} ${name}` })
+  await product.getByRole('button', { name: 'Preview' }).click()
+  await expect(page.getByRole('dialog', { name: 'Product' })).toContainText('€ 8,50')
+  await page.getByRole('dialog', { name: 'Product' }).getByRole('button', { name: 'Close' }).click()
+
+  await page.getByRole('link', { name: 'Sales' }).click()
+  await openForm(page, 'New sale')
+  await chooseOption(page, 'select[name="customer_id"]', shop, 'hak.saleCustomer')
+  await chooseOption(page, 'select[name="product_id"]', `${code} ${name}`)
+  await page.getByLabel('Quantity').fill('2')
+  await page.getByLabel('Unit price').fill('5,50')
+  await expect(page.getByText('Invoice total € 11,00')).toBeVisible()
+  await page.getByRole('button', { name: 'Save sale' }).click()
+  await expect(page.getByRole('row').filter({ hasText: shop }).filter({ hasText: '€ 11,00' })).toBeVisible()
+
+  await page.getByRole('link', { name: 'Payments' }).click()
+  await openForm(page, 'New payment')
+  await chooseOption(page, 'select[name="customer_id"]', shop)
+  await page.getByLabel('Amount').fill('10,00')
+  await page.getByRole('button', { name: 'Save payment' }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: shop }).filter({ hasText: '€ 10,00' })).toBeVisible()
+
+  await page.getByRole('link', { name: 'Expenses' }).click()
+  await openForm(page, 'New expense')
+  await page.getByLabel('Category').fill(`Comma freight ${stamp}`)
+  await page.getByLabel('Amount').fill('6,50')
+  await page.getByLabel('Paid by').selectOption({ label: 'Haseeb' })
+  await page.getByRole('button', { name: 'Save expense' }).click()
+  await expect(page.getByRole('row').filter({ hasText: `Comma freight ${stamp}` }).filter({ hasText: '€ 6,50' })).toBeVisible()
+
+  await page.getByRole('link', { name: 'Suppliers' }).click()
+  await openForm(page, 'New supplier')
+  await page.getByLabel('Name').fill(supplier)
+  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('link', { name: 'Purchases' }).click()
+  await openForm(page, 'New purchase')
+  await chooseOption(page, 'select[name="supplier_id"]', supplier, 'hak.purchaseSupplier')
+  await chooseOption(page, 'select[name="product_id"]', name)
+  await page.locator('input[name="qty"]').fill('3')
+  await page.locator('input[name="cost"]').fill('1,20')
+  await page.getByLabel('Received').fill('3')
+  await page.getByRole('button', { name: 'Save purchase' }).click()
+  await page.getByRole('link', { name: 'Suppliers' }).click()
+  await expect(page.getByRole('row').filter({ hasText: supplier })).toContainText('We owe € 3,60')
+})

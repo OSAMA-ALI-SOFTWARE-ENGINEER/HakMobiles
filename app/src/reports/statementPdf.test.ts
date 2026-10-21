@@ -22,7 +22,10 @@ function pdfText(bytes: Buffer): string {
   return [...inflated.matchAll(/\[([\s\S]*?)\]\s*TJ/g)].map((run) =>
     [...run[1].matchAll(/<([0-9A-Fa-f]+)>/g)].map((hex) => {
       let text = ''
-      for (let index = 0; index < hex[1].length; index += 2) text += String.fromCharCode(parseInt(hex[1].slice(index, index + 2), 16))
+      for (let index = 0; index < hex[1].length; index += 2) {
+        const code = parseInt(hex[1].slice(index, index + 2), 16)
+        text += code === 0x80 ? '€' : String.fromCharCode(code)
+      }
       return text
     }).join(''),
   ).join('\n')
@@ -34,8 +37,8 @@ describe('statement pdf', () => {
     const blob = await pdf(createElement(StatementDocument, { statement })).toBlob()
     const text = pdfText(Buffer.from(await blob.arrayBuffer()))
     expect(text).toContain('Shop A')
-    expect(text).toContain('470.00')
-    expect(text).toContain('300.00')
-    expect(text).toContain('170.00')
+    expect(text).toContain('€ 470,00')
+    expect(text).toContain('€ 300,00')
+    expect(text).toContain('€ 170,00')
   })
 })

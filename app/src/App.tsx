@@ -38,6 +38,7 @@ import { customerStatement } from './shared/reports'
 import { purchaseLedgerRows, supplierMoney } from './shared/purchases'
 import { backupName, dashboardView, type DashboardPeriod } from './shared/dashboard'
 import { withoutInlineMedia, shouldKeepLocalMedia } from './shared/photos'
+import { syncFailureNotice } from './sync/engine'
 import { tablesFromWorkbook, tablesToWorkbook } from './shared/trackerImport'
 import { RecordImage } from './ui/RecordImage'
 import { rowFromServer, rowToServer } from './sync/codec'
@@ -278,7 +279,7 @@ export default function App() {
           return
         }
         const waiting = await browserQuery('SELECT op_id FROM outbox').catch(() => [])
-        const detail = error instanceof Error ? error.message : 'Sync failed'
+        const detail = syncFailureNotice(error)
         setNotice(navigator.onLine ? detail : '')
         setStatus(navigator.onLine ? 'Needs attention' : `Offline with ${waiting.length} waiting`)
       }

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { applyPull, takeBatch } from './engine'
+import { applyPull, syncFailureNotice, takeBatch } from './engine'
 
 it('does not overwrite a record that is still in the outbox', () => {
   const rows = new Map<string, Record<string, unknown>>([['products:1', { name: 'Local' }]])
@@ -19,4 +19,10 @@ it('does not overwrite a record that is still in the outbox', () => {
 
 it('sends at most 200 outbox rows', () => {
   expect(takeBatch(Array.from({ length: 250 }, (_, index) => index), 200)).toHaveLength(200)
+})
+
+it('keeps a sync failure visible when the error has no message', () => {
+  expect(syncFailureNotice(new Error('   '))).toBe('Sync failed')
+  expect(syncFailureNotice(new Error('outbox locked'))).toBe('outbox locked')
+  expect(syncFailureNotice('offline')).toBe('Sync failed')
 })

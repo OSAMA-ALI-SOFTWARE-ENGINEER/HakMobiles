@@ -23,7 +23,7 @@ function ListEditor({ label, items, onChange }: { label: string; items: string[]
         {items.map((item) => (
           <li key={item}>
             <span>{item}</span>
-            <button type="button" className="btn-ghost" onClick={() => onChange(items.filter((entry) => entry !== item))}>Remove</button>
+            <button type="button" className="btn-ghost" aria-label={`Remove ${item}`} onClick={() => onChange(items.filter((entry) => entry !== item))}>Remove</button>
           </li>
         ))}
       </ul>

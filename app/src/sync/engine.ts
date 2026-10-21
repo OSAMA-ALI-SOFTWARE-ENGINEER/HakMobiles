@@ -22,3 +22,8 @@ export function applyPull(
 export function takeBatch<T>(rows: T[], size = 200): T[] {
   return rows.slice(0, size)
 }
+
+export function syncFailureNotice(error: unknown): string {
+  const message = error instanceof Error ? error.message.trim() : ''
+  return message !== '' ? message : 'Sync failed'
+}
