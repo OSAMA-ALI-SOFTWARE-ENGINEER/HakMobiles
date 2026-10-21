@@ -4,7 +4,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { loadArchived, saveLocal } from '../db/browser'
 import type { LocalTables } from '../data/ledger'
 import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
-import { landedUnitCosts, onOrderQty, purchaseLedgerRows, purchaseStatus, supplierMoney } from '../shared/purchases'
+import { landedUnitCosts, onOrderQty, purchaseLedgerRows, purchaseLineTotal, purchaseOrderTotal, purchaseStatus, supplierMoney } from '../shared/purchases'
 import { editReasonGate } from '../shared/records'
 import { lisbonToday } from '../shared/sales'
 import { ArchiveDialog, RowActions } from '../ui/RecordActions'
@@ -55,15 +55,22 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
   )
   const ordered = draft.reduce((sum, line) => sum + Number(line.qty), 0)
   const arrived = draft.reduce((sum, line) => sum + (line.received === '' ? Number(line.qty) : Number(line.received)), 0)
+  const productName = (id: string) => {
+    const product = tables.products.find((row) => row.id === id)
+    return product ? `${product.code} ${product.name}` : 'Product'
+  }
+  const liveLines = draft.map((line, index) => ({
+    name: productName(line.productId),
+    qty: Number(line.qty),
+    unit: landed[index] ?? 0,
+    total: purchaseLineTotal(Number(line.qty), landed[index] ?? 0),
+  }))
+  const liveTotal = purchaseOrderTotal(liveLines.map((line) => ({ qty: line.qty, landedUnitCents: line.unit })))
   const today = lisbonToday()
   const reasonGate = editReasonGate(editingId ? orderDate : today, today, reason)
   const chooseSupplier = (id: string) => {
     sessionStorage.setItem('hak.purchaseSupplier', id)
     setSupplierId(id)
-  }
-  const productName = (id: string) => {
-    const product = tables.products.find((row) => row.id === id)
-    return product ? `${product.code} ${product.name}` : 'Product'
   }
 
   function resetForm() {
@@ -191,7 +198,17 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
         <button type="button" className="btn-ghost" onClick={() => setExtras((current) => [...current, { productId: selectedProduct, qty: '1', cost: '', received: '' }])}>Add line</button>
         <label className="control-line">Shipping (EUR)<input name="shipping" aria-label="Shipping" placeholder="Shipping" className="control" value={shipping} onChange={(event) => setShipping(event.target.value)} /></label>
         <p className="quiet">Euros. Spread across the lines by quantity.</p>
-        {draft.length > 0 && <p className="lede">Landed cost {centsToEuros(landed[0] ?? 0)} per piece · {purchaseStatus(ordered, arrived)} · {onOrderQty(ordered, arrived)} on order</p>}
+        {draft.length > 0 && (
+          <div className="purchase-live">
+            <p className="lede">Landed cost {centsToEuros(landed[0] ?? 0)} per piece · {purchaseStatus(ordered, arrived)} · {onOrderQty(ordered, arrived)} on order</p>
+            <ul className="record-list">
+              {liveLines.map((line) => (
+                <li key={`${line.name}-${line.qty}-${line.unit}`}>{line.name} · {line.qty} × {centsToEuros(line.unit)} = {centsToEuros(line.total)}</li>
+              ))}
+            </ul>
+            <p className="purchase-total">Order total {centsToEuros(liveTotal)}</p>
+          </div>
+        )}
         {editingId && reasonGate.needsReason && (
           <label className="control-line">Reason
             <input aria-label="Change reason" className="control" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why this older record is changing" />
@@ -207,11 +224,12 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
             <FactList items={[
               { label: 'Supplier', value: String(tables.suppliers.find((row) => row.id === preview.supplier_id)?.name ?? 'Supplier') },
               { label: 'Date', value: String(preview.date ?? '').slice(0, 10) },
-              { label: 'Shipping', value: centsToEuros(Number(preview.extra_cost ?? 0)), wide: true },
+              { label: 'Shipping', value: centsToEuros(Number(preview.extra_cost ?? 0)) },
+              { label: 'Total', value: centsToEuros(purchaseOrderTotal(previewLines.map((line) => ({ qty: line.qty, landedUnitCents: line.unitCostCents })))) },
             ]} />
             <ul className="record-list">
-              {previewLines.map((line) => (
-                <li key={line.productId}>{productName(line.productId)} · Ordered {line.qty} · Received {line.receivedQty ?? line.qty} · {centsToEuros(line.unitCostCents)} landed</li>
+              {previewLines.map((line, index) => (
+                <li key={`${line.productId}-${index}`}>{productName(line.productId)} · Ordered {line.qty} · Received {line.receivedQty ?? line.qty} · {line.qty} × {centsToEuros(line.unitCostCents)} = {centsToEuros(purchaseLineTotal(line.qty, line.unitCostCents))}</li>
               ))}
             </ul>
             {canManage && <button type="button" className="btn" onClick={() => { loadOrder(preview); setPreviewId(''); setOpen(true) }}>Edit</button>}

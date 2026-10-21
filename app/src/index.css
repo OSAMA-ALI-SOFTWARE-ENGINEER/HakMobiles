@@ -519,6 +519,8 @@ textarea.control { height: auto; padding: 10px 14px; }
 .popup .record-list { margin-top: 14px; }
 .popup .record-list li { align-items: flex-start; line-height: 1.45; }
 .popup .record-photo.large { margin-bottom: 14px; }
+.purchase-live { display: grid; gap: 8px; }
+.purchase-total { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.03em; }
 @media (max-width: 640px) {
   .fact-list { grid-template-columns: 1fr; }
   .fact-list > div.wide { grid-column: auto; }

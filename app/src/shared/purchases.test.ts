@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { summarize } from './calc'
 import { fxToEurCents, weightedAverageCost } from './money'
-import { landedUnitCosts, onOrderQty, purchaseLedgerRows, purchaseStatus, supplierMoney, supplierPosition } from './purchases'
+import { landedUnitCosts, onOrderQty, purchaseLedgerRows, purchaseLineTotal, purchaseOrderTotal, purchaseStatus, supplierMoney, supplierPosition } from './purchases'
 
 describe('purchases', () => {
   it('spreads shipping across the pieces and averages later receipts', () => {
@@ -45,6 +45,8 @@ describe('purchases', () => {
       purchases: [{ id: 'buy', supplier_id: 's', extra_cost: 2000 }],
       lines: [{ purchase_id: 'buy', product_id: 'p', qty: 100, qty_received: 60, unit_cost: 100 }],
     })
+    expect(purchaseLineTotal(3, 120)).toBe(360)
+    expect(purchaseOrderTotal([{ qty: 100, landedUnitCents: 120 }])).toBe(12000)
     expect(rows[0].unitCostCents).toBe(120)
     expect(rows[0].receivedQty).toBe(60)
     expect(supplierMoney({

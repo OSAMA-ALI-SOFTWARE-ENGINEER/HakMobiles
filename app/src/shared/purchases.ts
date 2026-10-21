@@ -31,6 +31,14 @@ export function onOrderQty(ordered: number, received: number): number {
   return Math.max(0, ordered - received)
 }
 
+export function purchaseLineTotal(qty: number, landedUnitCents: Cents): Cents {
+  return Math.round(qty) * Math.round(landedUnitCents)
+}
+
+export function purchaseOrderTotal(lines: { qty: number; landedUnitCents: Cents }[]): Cents {
+  return lines.reduce((sum, line) => sum + purchaseLineTotal(line.qty, line.landedUnitCents), 0)
+}
+
 export function supplierPosition(purchasedCents: Cents, paidCents: Cents): { purchasedCents: Cents; paidCents: Cents; owedCents: Cents } {
   return {
     purchasedCents,
