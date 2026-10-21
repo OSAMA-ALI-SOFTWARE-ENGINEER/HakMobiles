@@ -530,11 +530,13 @@ export default function App() {
           <Route path="/pipeline" element={<Guard session={session} path="/pipeline"><Pipeline tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} onSaved={refresh} /></Guard>} />
           <Route path="/follow-ups" element={<Guard session={session} path="/follow-ups"><FollowUps tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} onSaved={refresh} /></Guard>} />
           <Route path="/calendar" element={<Guard session={session} path="/calendar"><CalendarScreen tables={tables} /></Guard>} />
-          <Route path="/suppliers" element={<Guard session={session} path="/suppliers"><SimpleEntry title="Suppliers" table="suppliers" fields={['name', 'phone', 'country']} onSaved={refresh} rows={tables.suppliers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('suppliers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} balanceOf={(row) => supplierMoney({ supplierId: String(row.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments }).owedCents} detail={(row) => {
+          <Route path="/suppliers" element={<Guard session={session} path="/suppliers"><SimpleEntry title="Suppliers" table="suppliers" fields={['name', 'first_name', 'last_name', 'email', 'phone', 'whatsapp', 'nif', 'address', 'home_address', 'country']} onSaved={refresh} rows={tables.suppliers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('suppliers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} balanceOf={(row) => supplierMoney({ supplierId: String(row.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments }).owedCents} detail={(row) => {
             const money = supplierMoney({ supplierId: String(row.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
             return `Purchased ${centsToEuros(money.purchasedCents)} · Paid ${centsToEuros(money.paidCents)} · We owe ${centsToEuros(money.owedCents)}`
           }} previewExtra={(row) => {
-            const orders = purchaseLedgerRows({ purchases: tables.purchases.filter((purchase) => purchase.supplier_id === row.id), lines: tables.purchase_lines })
+            const purchases = tables.purchases.filter((purchase) => purchase.supplier_id === row.id)
+            const purchaseIds = new Set(purchases.map((purchase) => purchase.id))
+            const orders = purchaseLedgerRows({ purchases, lines: tables.purchase_lines.filter((line) => purchaseIds.has(line.purchase_id)) })
             const paid = tables.supplier_payments.filter((payment) => payment.supplier_id === row.id)
             return (
               <ul className="record-list">
@@ -1034,8 +1036,8 @@ function Card({ label, value, note, tone, to }: { label: string; value: string; 
   return to ? <Link className="metric-link" to={to}>{card}</Link> : card
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="control-line">{label}{children}</label>
+function Field({ label, hint, wide, children }: { label: string; hint?: string; wide?: boolean; children: ReactNode }) {
+  return <label className={wide ? 'control-line wide-field' : 'control-line'}>{label}{children}{hint && <span className="field-hint">{hint}</span>}</label>
 }
 
 function withChoice(options: string[], current?: string) {
@@ -1357,18 +1359,19 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
   const action = title === 'Customers' ? 'New customer' : title === 'Suppliers' ? 'New supplier' : `New ${title.toLowerCase()}`
   const singular = title === 'Customers' ? 'customer' : title === 'Suppliers' ? 'supplier' : title.toLowerCase()
   const shops = rows.map((row) => ({ id: String(row.id), shop_name: String(row.shop_name ?? row.name ?? ''), nif: row.nif == null ? null : String(row.nif), phone: row.phone == null ? null : String(row.phone) }))
-  const warning = table === 'customers' ? duplicateWarning(shops, { nif: draft.nif, phone: draft.phone }) : ''
+  const warning = table === 'customers' || table === 'suppliers' ? duplicateWarning(shops.filter((shop) => shop.id !== editingId), { nif: draft.nif, phone: draft.phone }) : ''
   const groups = table === 'customers' && canMerge ? duplicateGroups(shops) : []
   const [params, setParams] = useSearchParams()
   useEffect(() => {
     if (params.get('new') !== '1') return
     setEditingId('')
-    setDraft({})
+    setDraft(table === 'suppliers' ? { country: 'Portugal' } : {})
     setError('')
     setOpen(true)
     setParams({}, { replace: true })
-  }, [params, setParams])
-  const labels = { shop_name: 'Shop name', phone: 'Phone', nif: 'NIF', city: 'City', email: 'Email', address: 'Address', credit_limit: 'Credit limit (EUR)', name: 'Name', country: 'Country' } as Record<string, string>
+  }, [params, setParams, table])
+  const labels = { shop_name: 'Shop name', phone: 'Phone', nif: 'NIF', city: 'City', email: 'Email', address: table === 'suppliers' ? 'Shop address' : 'Address', home_address: 'Home address', credit_limit: 'Credit limit (EUR)', name: 'Name', country: 'Country', first_name: 'First name', last_name: 'Last name', whatsapp: 'WhatsApp' } as Record<string, string>
+  const hints = { nif: 'Portuguese tax number, 9 digits. Optional.', whatsapp: 'Optional. Leave empty to use the phone number.' } as Record<string, string>
   const fieldValue = (row: Record<string, unknown>, field: string) => field === 'credit_limit' ? (row.credit_limit == null || row.credit_limit === '' ? '' : centsToInput(Number(row.credit_limit))) : (row[field] == null ? '' : String(row[field]))
   const owed = (id: string) => {
     const row = rows.find((item) => item.id === id)
@@ -1384,16 +1387,16 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
   const preview = rows.find((row) => row.id === previewId)
   return (
     <section className="page">
-      <div className="page-head"><div><h1>{title}</h1></div>{canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setDraft({}); setError(''); setOpen(true) }}>{action}</button>}</div>
+      <div className="page-head"><div><h1>{title}</h1></div>{canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setDraft(table === 'suppliers' ? { country: 'Portugal' } : {}); setError(''); setOpen(true) }}>{action}</button>}</div>
       <Popup title={editingId ? `Edit ${singular}` : action} open={open} onClose={() => setOpen(false)}>
-      <form className="form-grid" onSubmit={async (event) => {
+      <form className={table === 'suppliers' ? 'form-grid two' : 'form-grid'} onSubmit={async (event) => {
         event.preventDefault()
         const existing = rows.find((item) => item.id === editingId)
         const row: Record<string, unknown> = { ...(existing ?? {}), id: editingId || uuidv7(), deleted_at: null }
         for (const field of fields) {
-          const value = draft[field] ?? ''
+          const value = (draft[field] ?? '').trim()
           if (field === 'credit_limit') {
-            if (value.trim() === '') { row[field] = null; continue }
+            if (value === '') { row[field] = null; continue }
             const cents = parseEuros(value)
             if (cents == null) { setError('Enter the credit limit in euros, for example 50,00.'); return }
             row[field] = cents
@@ -1401,9 +1404,14 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
           }
           row[field] = value === '' && field !== 'shop_name' && field !== 'name' ? null : value
         }
-        if (table === 'customers' && typeof row.nif === 'string' && row.nif !== '' && !isValidPortugueseNif(row.nif)) {
+        if ((table === 'customers' || table === 'suppliers') && typeof row.nif === 'string' && row.nif !== '' && !isValidPortugueseNif(row.nif)) {
           setError('Enter a valid Portuguese NIF (9 digits).')
           return
+        }
+        if (table === 'suppliers') {
+          const person = [row.first_name, row.last_name].filter((part) => typeof part === 'string' && part.trim() !== '').join(' ')
+          row.contact = person || null
+          if (row.country == null || row.country === '') row.country = 'Portugal'
         }
         try {
           await saveLocal(table, row)
@@ -1418,15 +1426,22 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
       }}>
         {fields.map((field) => {
           const label = labels[field] ?? field
+          const long = table === 'suppliers' && (field === 'address' || field === 'home_address')
           return (
-            <Field key={field} label={label}>
-              <input name={field} aria-label={label} placeholder={label} required={field === 'shop_name' || field === 'name'} className="control" value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
+            <Field key={field} label={label} hint={table === 'suppliers' ? hints[field] : undefined} wide={long}>
+              {long ? (
+                <textarea name={field} aria-label={label} placeholder={label} className="control" rows={2} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
+              ) : (
+                <input name={field} aria-label={label} placeholder={field === 'nif' ? '123456789' : label} required={field === 'shop_name' || field === 'name'} className="control" type={field === 'email' ? 'email' : field === 'phone' || field === 'whatsapp' ? 'tel' : 'text'} inputMode={field === 'nif' ? 'numeric' : undefined} maxLength={field === 'nif' ? 9 : undefined} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
+              )}
             </Field>
           )
         })}
-        {warning && <p className="warn" role="status">{warning}</p>}
-        {error && <p className="error">{error}</p>}
-        <button className="btn">{editingId ? 'Save changes' : 'Save'}</button>
+        <div className="form-span">
+          {warning && <p className="warn" role="status">{warning}</p>}
+          {error && <p className="error">{error}</p>}
+          <button className="btn">{editingId ? 'Save changes' : 'Save'}</button>
+        </div>
       </form>
       </Popup>
       <Popup sheet title={singular[0].toUpperCase() + singular.slice(1)} open={preview != null} onClose={() => setPreviewId('')}>
@@ -1437,7 +1452,7 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
               value: field === 'credit_limit'
                 ? (preview.credit_limit == null || preview.credit_limit === '' ? '' : centsToEuros(Number(preview.credit_limit)))
                 : fieldValue(preview, field),
-              wide: field === 'address' || field === 'email',
+              wide: field === 'address' || field === 'home_address' || field === 'email',
             })),
             ...(detail ? detail(preview).split(' · ').map((part) => {
               const amount = part.match(/€\s*[\d.,-]+/)
@@ -1467,7 +1482,7 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
       {rows.length === 0 && <p className="quiet">No {title.toLowerCase()} yet.</p>}
       <RecordTable
         caption={title}
-        headers={table === 'customers' ? ['Shop', 'Phone', 'City', 'Owed', 'Last order', ''] : ['Name', 'Phone', 'Country', 'Balance', '']}
+        headers={table === 'customers' ? ['Shop', 'Phone', 'City', 'Owed', 'Last order', ''] : ['Name', 'Contact', 'Phone', 'Country', 'Balance', '']}
         rows={rows.map((row) => {
           const actions = <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => {
             setEditingId(String(row.id))
@@ -1500,7 +1515,7 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
           }
           return {
             key: String(row.id),
-            cells: [String(row.name ?? ''), String(row.phone ?? ''), String(row.country ?? ''), detail?.(row) ?? '', actions],
+            cells: [String(row.name ?? ''), [row.first_name, row.last_name].filter((part) => part != null && String(part).trim() !== '').join(' ') || '—', String(row.phone ?? ''), String(row.country ?? ''), detail?.(row) ?? '', actions],
           }
         })}
       />

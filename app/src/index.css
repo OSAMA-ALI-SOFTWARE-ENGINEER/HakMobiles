@@ -322,6 +322,13 @@ h1, h2, .brand-name, .money { font-weight: 600; letter-spacing: -0.02em; }
 }
 .form-grid .control-line { max-width: none; font-weight: 600; }
 .form-grid .control { font-weight: 450; }
+.form-grid.two .wide-field,
+.form-grid.two .form-span { grid-column: 1 / -1; }
+.field-hint { font-weight: 450; color: #98a2b3; font-size: 12px; }
+textarea.control { height: auto; min-height: 76px; padding: 10px 14px; resize: vertical; line-height: 1.4; }
+@media (min-width: 720px) {
+  .popup .form-grid.two { grid-template-columns: 1fr 1fr; }
+}
 
 .control {
   width: 100%;
@@ -445,10 +452,45 @@ textarea.control { height: auto; padding: 10px 14px; }
 .insight-page .chart { padding-bottom: 8px; }
 .day-panel { display: grid; gap: 8px; }
 .year-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-.month-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-.day-cell { min-height: 28px; border-radius: 6px; padding: 2px; font-size: 11px; }
-.day-cell[data-today="true"] { outline: 1px solid var(--brand); }
-.day-cell .btn-ghost { height: 24px; min-width: 24px; padding: 0 4px; }
+.calendar-legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; padding: 0; list-style: none; }
+.calendar-legend li { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 650; }
+.calendar-legend li::before { content: ""; width: 8px; height: 8px; border-radius: 99px; background: currentColor; }
+.calendar-legend li[data-kind="follow-up"] { color: #3538cd; background: #eef4ff; }
+.calendar-legend li[data-kind="invoice"] { color: #b42318; background: #fef3f2; }
+.calendar-legend li[data-kind="sale"] { color: #027a48; background: #ecfdf3; }
+.calendar-legend li[data-kind="purchase"] { color: #5925dc; background: #f4f3ff; }
+.calendar-legend li[data-kind="payment"] { color: #0e7090; background: #f0f9ff; }
+.calendar-legend li[data-kind="supplier"] { color: #b54708; background: #fffaeb; }
+.calendar-legend li[data-kind="expense"] { color: #c11574; background: #fdf2fa; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.weekday { padding: 4px 0 8px; color: #667085; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-align: center; text-transform: uppercase; }
+.day-pad { min-height: 108px; border-radius: 14px; background: #f8fafc; }
+.day-cell { display: flex; min-height: 108px; flex-direction: column; gap: 4px; border: 1px solid #e7e9f2; border-radius: 14px; background: white; padding: 8px; }
+.day-cell[data-weekend="true"] { background: #f8fafc; }
+.day-cell[data-today="true"] { border-color: #465fff; background: #f5f8ff; box-shadow: inset 0 0 0 1px #465fff; }
+.day-num { align-self: flex-start; width: 28px; height: 28px; border: 0; border-radius: 999px; background: transparent; color: #344054; font-weight: 700; }
+.day-cell[data-today="true"] .day-num { background: #465fff; color: white; }
+.day-chip { display: block; overflow: hidden; border-radius: 7px; padding: 3px 6px; font-size: 11px; font-weight: 650; line-height: 1.3; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.day-chip[data-kind="follow-up"] { color: #3538cd; background: #eef4ff; }
+.day-chip[data-kind="invoice"] { color: #b42318; background: #fef3f2; }
+.day-chip[data-kind="sale"] { color: #027a48; background: #ecfdf3; }
+.day-chip[data-kind="purchase"] { color: #5925dc; background: #f4f3ff; }
+.day-chip[data-kind="payment"] { color: #0e7090; background: #f0f9ff; }
+.day-chip[data-kind="supplier"] { color: #b54708; background: #fffaeb; }
+.day-chip[data-kind="expense"] { color: #c11574; background: #fdf2fa; }
+.day-more { border: 0; background: transparent; padding: 0 2px; color: #465fff; font-size: 11px; font-weight: 700; text-align: left; }
+.day-row { border-radius: 8px; padding: 8px 10px; }
+.day-row[data-kind="follow-up"] { background: #eef4ff; }
+.day-row[data-kind="sale"] { background: #ecfdf3; }
+.day-row[data-kind="purchase"] { background: #f4f3ff; }
+.day-row[data-kind="payment"] { background: #f0f9ff; }
+.day-row[data-kind="supplier"] { background: #fffaeb; }
+.day-row[data-kind="expense"] { background: #fdf2fa; }
+@media (max-width: 720px) {
+  .calendar-grid { gap: 4px; }
+  .day-cell, .day-pad { min-height: 72px; padding: 4px; }
+  .day-chip { font-size: 10px; }
+}
 .product-name { display: flex; align-items: center; gap: 8px; }
 .record-photo { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; background: #f2f4f7; }
 .record-photo.large { width: 160px; height: 160px; }
@@ -526,6 +568,47 @@ textarea.control { height: auto; padding: 10px 14px; }
   .fact-list > div.wide { grid-column: auto; }
 }
 .popup .form-grid { border: 0; padding: 0; background: transparent; box-shadow: none; }
+.invoice-sheet { display: grid; gap: 0; overflow: hidden; border: 1px solid #d9e2ff; border-radius: 16px; background: white; padding: 0; }
+.invoice-head, .invoice-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #465fff; color: white; padding: 18px 22px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.invoice-lockup { display: flex; align-items: center; gap: 12px; }
+.invoice-head .mark, .invoice-foot .mark { flex: none; background: white; }
+.invoice-head .mark i, .invoice-foot .mark i { background: #465fff; }
+.invoice-foot .mark { width: 28px; height: 28px; }
+.invoice-foot .mark i { top: 6px; height: 16px; }
+.invoice-foot .mark i:first-child { left: 8px; }
+.invoice-foot .mark i:last-child { right: 8px; height: 10px; top: 12px; }
+.invoice-body { display: grid; gap: 18px; padding: 22px; }
+.invoice-parties { display: flex; justify-content: space-between; gap: 16px; }
+.invoice-brand { margin: 0; color: white; font-size: 22px; font-weight: 700; letter-spacing: -0.03em; }
+.invoice-kicker { margin: 2px 0 0; color: #d9e2ff; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.invoice-label { margin: 0; color: #667085; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.invoice-meta { text-align: right; color: white; }
+.invoice-meta p { margin: 0; }
+.invoice-no { color: white; font-size: 18px; font-weight: 700; letter-spacing: -0.03em; }
+.invoice-status { display: inline-block; margin-top: 8px; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; }
+.invoice-status[data-status="Paid"] { color: #027a48; background: #ecfdf3; }
+.invoice-status[data-status="Part-paid"] { color: #b54708; background: #fffaeb; }
+.invoice-status[data-status="Unpaid"] { color: #b42318; background: #fef3f2; }
+.invoice-party { margin: 4px 0 0; font-size: 16px; font-weight: 700; }
+.invoice-parties p { margin: 2px 0 0; }
+.invoice-lines { width: 100%; border-collapse: collapse; }
+.invoice-lines th { padding: 8px 6px; border-bottom: 1px solid #d9e2ff; background: #eef2ff; color: #3538cd; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-align: left; text-transform: uppercase; }
+.invoice-lines td { padding: 10px 6px; border-bottom: 1px solid #f2f4f7; }
+.invoice-lines th:nth-child(n+2), .invoice-lines td:nth-child(n+2) { text-align: right; }
+.invoice-totals { display: grid; justify-content: end; gap: 6px; margin: 0; }
+.invoice-totals div { display: grid; grid-template-columns: 80px 120px; gap: 12px; }
+.invoice-totals dt { margin: 0; color: #667085; }
+.invoice-totals dd { margin: 0; text-align: right; font-weight: 700; }
+.invoice-totals .due dd { color: #465fff; font-size: 20px; letter-spacing: -0.03em; }
+.invoice-foot { justify-content: flex-start; }
+.invoice-foot p { margin: 0; color: white; font-size: 12px; line-height: 1.4; }
+.invoice-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+@media print {
+  body * { visibility: hidden; }
+  .invoice-sheet, .invoice-sheet * { visibility: visible; }
+  .invoice-sheet { position: absolute; left: 0; top: 0; width: 100%; border: 0; }
+  .invoice-actions, .popup-head { display: none; }
+}
 .banner { border-radius: 8px; background: #fffaeb; padding: 12px 14px; }
 .banner button { border: 0; background: transparent; padding: 0; font-weight: 650; }
 

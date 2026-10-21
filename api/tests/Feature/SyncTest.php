@@ -212,6 +212,37 @@ it('stores zero shipping when a purchase sends a null extra cost', function () {
     expect((float) \Illuminate\Support\Facades\DB::table('purchases')->where('id', $purchaseId)->value('extra_cost'))->toBe(0.0);
 });
 
+it('stores portuguese supplier contact details', function () {
+    $admin = syncUser('Super Admin');
+    $id = (string) Str::uuid7();
+
+    $this->actingAs($admin, 'sanctum')->postJson('/api/sync/push', ['ops' => [
+        syncOp('suppliers', $id, [
+            'name' => 'Lisbon Parts',
+            'first_name' => 'Ana',
+            'last_name' => 'Silva',
+            'email' => 'ana@lisbon-parts.pt',
+            'phone' => '+351210000000',
+            'whatsapp' => '+351910000000',
+            'nif' => '123456789',
+            'address' => 'Rua Augusta 10, Lisboa',
+            'home_address' => 'Rua do Sol 2, Lisboa',
+            'country' => 'Portugal',
+            'contact' => 'Ana Silva',
+        ]),
+    ]])->assertOk()->assertJsonCount(0, 'rejected');
+
+    $row = \Illuminate\Support\Facades\DB::table('suppliers')->where('id', $id)->first();
+    expect($row->first_name)->toBe('Ana')
+        ->and($row->last_name)->toBe('Silva')
+        ->and($row->email)->toBe('ana@lisbon-parts.pt')
+        ->and($row->nif)->toBe('123456789')
+        ->and($row->address)->toBe('Rua Augusta 10, Lisboa')
+        ->and($row->home_address)->toBe('Rua do Sol 2, Lisboa')
+        ->and($row->whatsapp)->toBe('+351910000000')
+        ->and($row->country)->toBe('Portugal');
+});
+
 it('keeps an empty credit limit empty', function () {
     $admin = syncUser('Super Admin');
     $id = (string) Str::uuid7();

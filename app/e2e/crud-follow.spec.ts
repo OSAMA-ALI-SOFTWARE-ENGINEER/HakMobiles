@@ -186,7 +186,7 @@ test('supplier payment archive restores what we owe, and the preview lists the o
   await page.getByRole('button', { name: 'Save product' }).click()
   await page.getByRole('link', { name: 'Suppliers' }).click()
   await openForm(page, 'New supplier')
-  await page.getByLabel('Name').fill(supplier)
+  await page.getByLabel('Name', { exact: true }).fill(supplier)
   await page.getByRole('button', { name: 'Save' }).click()
 
   await page.getByRole('link', { name: 'Purchases' }).click()

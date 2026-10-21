@@ -42,7 +42,7 @@ test('a purchase can be previewed, edited, and archived', async ({ page }) => {
 
   await page.getByRole('link', { name: 'Suppliers' }).click()
   await openForm(page, 'New supplier')
-  await page.getByLabel('Name').fill(supplier)
+  await page.getByLabel('Name', { exact: true }).fill(supplier)
   await page.getByRole('button', { name: 'Save' }).click()
 
   await page.getByRole('link', { name: 'Purchases' }).click()
@@ -105,7 +105,7 @@ test('a product price can be edited and a supplier with nothing owed can be arch
 
   await page.getByRole('link', { name: 'Suppliers' }).click()
   await openForm(page, 'New supplier')
-  await page.getByLabel('Name').fill(supplier)
+  await page.getByLabel('Name', { exact: true }).fill(supplier)
   await page.getByRole('button', { name: 'Save' }).click()
   const row = page.getByRole('row').filter({ hasText: supplier })
   await chooseAction(row, 'Archive')
@@ -340,7 +340,7 @@ test('comma amounts save on a product, sale, payment, expense, and purchase', as
 
   await page.getByRole('link', { name: 'Suppliers' }).click()
   await openForm(page, 'New supplier')
-  await page.getByLabel('Name').fill(supplier)
+  await page.getByLabel('Name', { exact: true }).fill(supplier)
   await page.getByRole('button', { name: 'Save' }).click()
   await page.getByRole('link', { name: 'Purchases' }).click()
   await openForm(page, 'New purchase')

@@ -193,7 +193,7 @@ class SyncService
         if (isset($unique[$table], $row[$unique[$table]]) && $row[$unique[$table]] !== '') {
             $update[$unique[$table]] = $row[$unique[$table]].'~'.substr($id, 0, 8);
         }
-        if ($table === 'customers' && ! empty($row['nif'])) {
+        if (in_array($table, ['customers', 'suppliers'], true) && ! empty($row['nif'])) {
             $update['nif'] = null;
         }
         DB::table($table)->where('id', $id)->update($update);
@@ -319,6 +319,16 @@ class SyncService
                 $column => $row[$column].'~'.substr((string) $id, 0, 8),
             ]);
         }
+
+        if ($table !== 'suppliers' || ! isset($row['nif']) || $row['nif'] === null || $row['nif'] === '') {
+            return;
+        }
+
+        DB::table($table)
+            ->where('nif', $row['nif'])
+            ->where('id', '!=', $row['id'])
+            ->whereNotNull('deleted_at')
+            ->update(['nif' => null]);
     }
 
     /**

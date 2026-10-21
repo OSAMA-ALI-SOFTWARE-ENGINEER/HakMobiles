@@ -7,7 +7,7 @@ import { lineRevenue } from '../shared/calc'
 import { shopFigures, stageAfterOrders } from '../shared/crm'
 import { shopLabel } from '../shared/labels'
 import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
-import { allocationsFromCredit, paymentCredit } from '../shared/payments'
+import { allocationsFromCredit, invoiceStandings, paymentCredit } from '../shared/payments'
 import {
   averageCostByProduct,
   creditWarningText,
@@ -25,7 +25,7 @@ import { ArchiveDialog, RowActions } from '../ui/RecordActions'
 import { ArchivedPanel } from '../ui/ArchivedPanel'
 import { RecordTable } from '../ui/RecordTable'
 import { offerUndo } from '../ui/undo'
-import { FactList, Popup } from '../ui/Popup'
+import { Popup } from '../ui/Popup'
 
 export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, canManageSales, canEditOwn, onSaved }: {
   tables: LocalTables
@@ -374,19 +374,83 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
         <button className="btn" disabled={busy}>{editingId ? 'Save changes' : 'Save sale'}</button>
       </form>
       </Popup>
-      <Popup sheet title="Invoice" open={previewId !== '' && invoiceModel(previewId) != null} onClose={() => setPreviewId('')}>
-        {invoiceModel(previewId) && (
-          <div>
-            <FactList items={[
-              { label: 'Invoice', value: invoiceModel(previewId)?.invoiceNo ?? '' },
-              { label: 'Shop', value: invoiceModel(previewId)?.shop ?? '' },
-              { label: 'Total', value: centsToEuros(invoiceModel(previewId)?.totalCents ?? 0), wide: true },
-            ]} />
-            <ul className="record-list">
-              {invoiceModel(previewId)?.lines.map((line, index) => <li key={`${line.name}-${index}`}>{line.name} · {line.qty} · {centsToEuros(line.unitPriceCents)}</li>)}
-            </ul>
-          </div>
-        )}
+      <Popup title="Invoice" open={previewId !== '' && invoiceModel(previewId) != null} onClose={() => setPreviewId('')}>
+        {(() => {
+          const model = invoiceModel(previewId)
+          const sale = tables.sales.find((row) => row.id === previewId)
+          if (!model || !sale) return null
+          const customer = tables.customers.find((row) => row.id === sale.customer_id)
+          const sellerId = sale.sold_by == null ? '' : String(sale.sold_by)
+          const seller = tables.partners.find((row) => row.user_id === sellerId || row.id === sellerId)
+          const sellerName = seller ? String(seller.name) : sellerId === userId ? userName : ''
+          const standing = invoiceStandings({
+            sales: [{ id: String(sale.id), invoice_no: model.invoiceNo, customer_id: String(sale.customer_id), date: model.date }],
+            lines: tables.sale_lines.filter((line) => line.sale_id === sale.id).map((line) => ({ sale_id: String(line.sale_id), qty: Number(line.qty), unit_price: Number(line.unit_price), discount: Number(line.discount ?? 0) })),
+            allocations: tables.payment_allocations.filter((row) => row.sale_id === sale.id).map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
+            today,
+          })[0]
+          const shopLines = [customer?.phone, customer?.city, customer?.nif ? `NIF ${customer.nif}` : '', customer?.address].map((part) => String(part ?? '').trim()).filter(Boolean)
+          return (
+            <>
+              <article className="invoice-sheet">
+                <header className="invoice-head">
+                  <div className="invoice-lockup">
+                    <span className="mark" aria-hidden="true"><i /><i /></span>
+                    <div>
+                      <p className="invoice-brand">HAK Wholesales</p>
+                      <p className="invoice-kicker">Internal invoice</p>
+                    </div>
+                  </div>
+                  <div className="invoice-meta">
+                    <p className="invoice-no">{model.invoiceNo}</p>
+                    <p>{model.date.slice(0, 10)}</p>
+                    {standing && <p className="invoice-status" data-status={standing.status}>{standing.status}</p>}
+                  </div>
+                </header>
+                <div className="invoice-body">
+                <div className="invoice-parties">
+                  <div>
+                    <p className="invoice-label">Bill to</p>
+                    <p className="invoice-party">{model.shop}</p>
+                    {shopLines.map((line) => <p key={line}>{line}</p>)}
+                  </div>
+                  <div>
+                    <p className="invoice-label">Sold by</p>
+                    <p className="invoice-party">{sellerName || '—'}</p>
+                  </div>
+                </div>
+                <table className="invoice-lines">
+                  <thead>
+                    <tr><th>Product</th><th>Qty</th><th>Price</th><th>Amount</th></tr>
+                  </thead>
+                  <tbody>
+                    {model.lines.map((line, index) => (
+                      <tr key={`${line.name}-${index}`}>
+                        <td>{line.name}{line.discountCents > 0 ? ` · discount ${centsToEuros(line.discountCents)}` : ''}</td>
+                        <td>{line.qty}</td>
+                        <td>{centsToEuros(line.unitPriceCents)}</td>
+                        <td>{centsToEuros(line.totalCents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <dl className="invoice-totals">
+                  <div><dt>Total</dt><dd>{centsToEuros(model.totalCents)}</dd></div>
+                  <div><dt>Paid</dt><dd>{centsToEuros(standing?.paidCents ?? 0)}</dd></div>
+                  <div className="due"><dt>Left</dt><dd>{centsToEuros(Math.max(0, model.totalCents - (standing?.paidCents ?? 0)))}</dd></div>
+                </dl>
+                </div>
+                <footer className="invoice-foot">
+                  <span className="mark" aria-hidden="true"><i /><i /></span>
+                  <p>{model.footer || 'Internal invoice. Not a certified tax document.'}</p>
+                </footer>
+              </article>
+              <div className="invoice-actions">
+                <button type="button" className="btn" onClick={() => window.print()}>Print</button>
+              </div>
+            </>
+          )
+        })()}
       </Popup>
       <ArchiveDialog
         open={archiveId !== ''}

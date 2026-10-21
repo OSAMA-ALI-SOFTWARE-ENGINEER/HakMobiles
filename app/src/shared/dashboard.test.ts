@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { goldenTables } from '../data/ledger'
-import { calendarEvents, dashboardView, dayBook, periodRange } from './dashboard'
+import { calendarEvents, dashboardView, dayBook, mondayIndex, periodRange } from './dashboard'
 
 describe('dashboard period', () => {
   const view = dashboardView(goldenTables(), 'twelve', '2026-10-12')
@@ -52,6 +52,7 @@ describe('dashboard period', () => {
     const day = dayBook(goldenTables(), '2026-01-10')
     expect(day.salesCents).toBe(47000)
     expect(day.sales.map((sale) => sale.label)).toEqual(['HAK-001 · Shop A'])
+    expect(dayBook(goldenTables(), '2026-01-01').purchases.map((row) => row.label)).toEqual(['Purchase · Shenzhen Co'])
     expect(dashboardView(goldenTables(), 'custom', '2026-01-10', { start: '2026-01-10', end: '2026-01-10' }).customersOweCents).toBe(30500)
   })
 
@@ -62,5 +63,14 @@ describe('dashboard period', () => {
     expect(events.find((event) => event.date === '2026-10-12')?.label).toContain('Call Shop A')
     expect(events.some((event) => event.date === '2026-02-09')).toBe(true)
     expect(calendarEvents(tables, 2025, '2026-10-12')).toEqual([])
+  })
+
+  it('puts sales, purchases, and expenses on the day they happened', () => {
+    const events = calendarEvents(goldenTables(), 2026, '2026-10-12')
+    expect(events.find((event) => event.date === '2026-01-10')?.kind).toBe('sale')
+    expect(events.find((event) => event.date === '2026-01-01')?.kind).toBe('purchase')
+    expect(mondayIndex('2025-11-01')).toBe(5)
+    expect(mondayIndex('2026-10-01')).toBe(3)
+    expect(mondayIndex('2026-10-22')).toBe(3)
   })
 })

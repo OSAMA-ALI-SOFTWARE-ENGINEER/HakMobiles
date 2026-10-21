@@ -352,7 +352,7 @@ test('a purchase receives part of the order and shipping lands in the cost', asy
   await expect(page.getByRole('row').filter({ hasText: `${code} ${name}` })).toBeVisible()
   await page.getByRole('link', { name: 'Suppliers' }).click()
   await openForm(page, 'New supplier')
-  await page.getByLabel('Name').fill(supplier)
+  await page.getByLabel('Name', { exact: true }).fill(supplier)
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row').filter({ hasText: supplier })).toBeVisible()
 
