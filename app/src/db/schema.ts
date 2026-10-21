@@ -239,6 +239,19 @@ export const MONEY_FIELDS: Record<string, string[]> = {
   partner_transfers: ['amount'],
 }
 
+/** These money columns reject NULL. An empty amount is zero. Credit limit and cost-at-sale may stay empty. */
+export const MONEY_DEFAULT_ZERO: Record<string, string[]> = {
+  products: ['sell_price'],
+  purchases: ['extra_cost'],
+  purchase_lines: ['unit_cost'],
+  sale_lines: ['unit_price', 'discount'],
+  supplier_payments: ['amount', 'amount_eur'],
+  customer_payments: ['amount'],
+  payment_allocations: ['amount'],
+  expenses: ['amount', 'amount_eur'],
+  partner_transfers: ['amount'],
+}
+
 export interface Sql {
   exec(sql: string): void
   run(sql: string, params?: unknown[]): void

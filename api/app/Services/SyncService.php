@@ -13,6 +13,9 @@ use Illuminate\Support\Str;
 
 class SyncService
 {
+    /** @var array<string, array<string, array<string, mixed>>> */
+    private array $columnInfo = [];
+
     /**
      * @param  list<array{op_id: string, table: string, record_id: string, payload: array<string, mixed>}>  $ops
      * @return array{accepted: list<string>, rejected: list<array{op_id: string, reason: string}>}
@@ -220,7 +223,7 @@ class SyncService
             }
         }
 
-        $row = array_intersect_key($payload, array_flip($columns));
+        $row = $this->applyColumnDefaults($table, array_intersect_key($payload, array_flip($columns)));
         $this->releaseArchivedUniques($table, $row);
         $existing = DB::table($table)->where('id', $recordId)->first();
 
@@ -247,6 +250,44 @@ class SyncService
                 'device_id' => $deviceId,
             ]);
         }
+    }
+
+    /**
+     * MySQL rejects an explicit NULL on a NOT NULL column even when that column has a default.
+     * An empty shipping cost, price, or amount is zero. Nullable columns such as credit limit stay empty.
+     *
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    private function applyColumnDefaults(string $table, array $row): array
+    {
+        if (! isset($this->columnInfo[$table])) {
+            $info = [];
+            foreach (Schema::getColumns($table) as $column) {
+                $info[$column['name']] = $column;
+            }
+            $this->columnInfo[$table] = $info;
+        }
+
+        foreach ($row as $key => $value) {
+            if ($value !== null) {
+                continue;
+            }
+            $column = $this->columnInfo[$table][$key] ?? null;
+            if ($column === null || $column['nullable'] || $column['default'] === null || $column['default'] === '') {
+                continue;
+            }
+            $default = $column['default'];
+            if (is_string($default) && preg_match('/current_timestamp|now\(/i', $default)) {
+                continue;
+            }
+            if (is_string($default) && preg_match("/^'(.*)'$/", $default, $match)) {
+                $default = $match[1];
+            }
+            $row[$key] = $default;
+        }
+
+        return $row;
     }
 
     /**

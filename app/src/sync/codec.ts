@@ -1,4 +1,4 @@
-import { MONEY_FIELDS } from '../db/schema'
+import { MONEY_DEFAULT_ZERO, MONEY_FIELDS } from '../db/schema'
 
 function mysqlDateTime(value: unknown): unknown {
   if (typeof value !== 'string') return value
@@ -10,8 +10,14 @@ function mysqlDateTime(value: unknown): unknown {
 export function rowToServer(table: string, row: Record<string, unknown>): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...row }
   for (const field of MONEY_FIELDS[table] ?? []) {
-    if (typeof copy[field] === 'number') {
-      copy[field] = ((copy[field] as number) / 100).toFixed(2)
+    const value = copy[field]
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      copy[field] = (value / 100).toFixed(2)
+      continue
+    }
+    const missing = value == null || value === '' || (typeof value === 'number' && !Number.isFinite(value))
+    if (missing && Object.prototype.hasOwnProperty.call(copy, field) && (MONEY_DEFAULT_ZERO[table] ?? []).includes(field)) {
+      copy[field] = '0.00'
     }
   }
   if (table === 'partners' && typeof copy.share_pct === 'number') {

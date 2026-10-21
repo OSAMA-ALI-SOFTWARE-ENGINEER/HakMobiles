@@ -197,6 +197,35 @@ it('stores a partly received purchase with shipping', function () {
         ->and(\Illuminate\Support\Facades\DB::table('purchase_lines')->where('id', $lineId)->value('qty_received'))->toBe(60);
 });
 
+it('stores zero shipping when a purchase sends a null extra cost', function () {
+    $admin = syncUser('Super Admin');
+    $purchaseId = (string) Str::uuid7();
+
+    $this->actingAs($admin, 'sanctum')->postJson('/api/sync/push', ['ops' => [
+        syncOp('purchases', $purchaseId, [
+            'supplier_id' => (string) Str::uuid7(),
+            'date' => '2026-10-21',
+            'extra_cost' => null,
+        ]),
+    ]])->assertOk()->assertJsonCount(0, 'rejected');
+
+    expect((float) \Illuminate\Support\Facades\DB::table('purchases')->where('id', $purchaseId)->value('extra_cost'))->toBe(0.0);
+});
+
+it('keeps an empty credit limit empty', function () {
+    $admin = syncUser('Super Admin');
+    $id = (string) Str::uuid7();
+
+    $this->actingAs($admin, 'sanctum')->postJson('/api/sync/push', ['ops' => [
+        syncOp('customers', $id, [
+            'shop_name' => 'No limit',
+            'credit_limit' => null,
+        ]),
+    ]])->assertOk()->assertJsonCount(0, 'rejected');
+
+    expect(\Illuminate\Support\Facades\DB::table('customers')->where('id', $id)->value('credit_limit'))->toBeNull();
+});
+
 it('stores a purged product and keeps it out of the live list', function () {
     $admin = syncUser('Super Admin');
     $id = (string) Str::uuid7();
