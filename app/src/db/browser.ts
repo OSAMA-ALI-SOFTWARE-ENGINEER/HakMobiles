@@ -2,6 +2,7 @@ import { SQLocal } from 'sqlocal'
 import { v7 as uuidv7 } from 'uuid'
 import { SCHEMA_SQL } from './schema'
 import { saveStatements } from './repository'
+import { purchasePayloadWithShipping } from '../sync/codec'
 
 let opening: Promise<SQLocal> | null = null
 let batch: Promise<void> = Promise.resolve()
@@ -46,6 +47,12 @@ async function openDatabase(): Promise<SQLocal> {
       const message = error instanceof Error ? error.message : String(error)
       if (!/duplicate column name/i.test(message)) throw error
     }
+  }
+  await next.sql('UPDATE purchases SET extra_cost = 0 WHERE extra_cost IS NULL')
+  const waiting = await next.sql<{ op_id: string; payload: string }>('SELECT op_id, payload FROM outbox WHERE table_name = ?', 'purchases')
+  for (const row of waiting) {
+    const payload = purchasePayloadWithShipping(row.payload)
+    if (payload) await next.sql('UPDATE outbox SET payload = ? WHERE op_id = ?', payload, row.op_id)
   }
   return next
 }

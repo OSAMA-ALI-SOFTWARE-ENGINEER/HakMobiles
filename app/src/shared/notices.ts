@@ -30,3 +30,20 @@ export function trackerNotices(input: {
   }
   return notices
 }
+
+export function unreadNotices(notices: TrackerNotice[], readIds: string[]): TrackerNotice[] {
+  const read = new Set(readIds)
+  return notices.filter((notice) => !read.has(notice.id))
+}
+
+export function markNoticeRead(readIds: string[], id: string): string[] {
+  return readIds.includes(id) ? readIds : [...readIds, id]
+}
+
+export function markAllNoticesRead(readIds: string[], notices: TrackerNotice[]): string[] {
+  return [...new Set([...readIds, ...notices.map((notice) => notice.id)])]
+}
+
+export function noticeReadKey(userId: string): string {
+  return `hak.notice.read.${userId}`
+}

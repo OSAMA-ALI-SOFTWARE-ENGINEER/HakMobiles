@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { trackerNotices } from './notices'
+import { markAllNoticesRead, markNoticeRead, trackerNotices, unreadNotices } from './notices'
 
 const stock = [
   { code: 'C1', status: 'LOW' },
@@ -22,5 +22,13 @@ describe('notices', () => {
     const off = trackerNotices({ stock, openInvoices, today: '2026-10-09', canSeeStock: true, muted: ['invoice_overdue'] })
     expect(off.some((notice) => notice.kind === 'invoice_overdue')).toBe(false)
     expect(off.some((notice) => notice.text === 'C1 is low on stock')).toBe(true)
+  })
+
+  it('hides a notice after it is marked read, and mark all covers every current notice', () => {
+    const notices = trackerNotices({ stock, openInvoices, today: '2026-10-09', canSeeStock: true, muted: [] })
+    const one = markNoticeRead([], notices[0].id)
+    expect(unreadNotices(notices, one).some((notice) => notice.id === notices[0].id)).toBe(false)
+    expect(unreadNotices(notices, one)).toHaveLength(notices.length - 1)
+    expect(unreadNotices(notices, markAllNoticesRead([], notices))).toHaveLength(0)
   })
 })

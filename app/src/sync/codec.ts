@@ -27,6 +27,21 @@ export function rowToServer(table: string, row: Record<string, unknown>): Record
   return copy
 }
 
+/** A purchase waiting in the outbox with no shipping cost is stored as 0 cents, which the server accepts. */
+export function purchasePayloadWithShipping(payload: string): string | null {
+  let row: Record<string, unknown>
+  try {
+    row = JSON.parse(payload) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (row == null || typeof row !== 'object' || Array.isArray(row)) return null
+  const cost = row.extra_cost
+  const missing = cost == null || cost === '' || (typeof cost === 'number' && !Number.isFinite(cost))
+  if (!missing) return null
+  return JSON.stringify({ ...row, extra_cost: 0 })
+}
+
 export function rowFromServer(table: string, row: Record<string, unknown>): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...row }
   for (const field of MONEY_FIELDS[table] ?? []) {

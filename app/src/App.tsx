@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeftRight, BarChart3, Bell, Calendar, CalendarDays, ChevronDown, Eye, EyeOff, Kanban, LayoutDashboard, LogOut, Package, Receipt, ScrollText, Search, Settings, Shield, ShoppingBag, Store, Truck, Wallet, type LucideIcon } from 'lucide-react'
 import { useForm } from 'react-hook-form'
@@ -33,7 +33,8 @@ import { ArchiveDialog, RowActions } from './ui/RecordActions'
 import { RecordTable } from './ui/RecordTable'
 import { ArchivedPanel } from './ui/ArchivedPanel'
 import { UndoToast, offerUndo } from './ui/undo'
-import { trackerNotices } from './shared/notices'
+import { markAllNoticesRead, markNoticeRead, noticeReadKey, trackerNotices, unreadNotices } from './shared/notices'
+import { sidebarCollapsed, storedSidebarWidth } from './shared/sidebar'
 import { customerStatement } from './shared/reports'
 import { purchaseLedgerRows, supplierMoney } from './shared/purchases'
 import { backupName, dashboardView, type DashboardPeriod } from './shared/dashboard'
@@ -142,6 +143,9 @@ export default function App() {
   const [accountOpen, setAccountOpen] = useState(false)
   const [noticesOpen, setNoticesOpen] = useState(false)
   const [desktopNew, setDesktopNew] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(() => storedSidebarWidth(localStorage.getItem('hak.sidebarWidth')))
+  const [readNoticeIds, setReadNoticeIds] = useState<string[]>([])
+  const sidebarDrag = useRef<{ startX: number; startW: number } | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
   const navigate = useNavigate()
 
@@ -153,6 +157,16 @@ export default function App() {
   useEffect(() => {
     refresh().catch(() => setNotice('Local database is still opening.'))
   }, [])
+
+  useEffect(() => {
+    if (!session) return
+    try {
+      const stored = JSON.parse(localStorage.getItem(noticeReadKey(session.userId)) ?? '[]')
+      setReadNoticeIds(Array.isArray(stored) ? stored.filter((id) => typeof id === 'string') : [])
+    } catch {
+      setReadNoticeIds([])
+    }
+  }, [session?.userId])
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent) => {
@@ -317,14 +331,20 @@ export default function App() {
     return statement.invoices.filter((invoice) => invoice.openCents > 0).map((invoice) => ({ id: invoice.invoiceNo, label: statement.shop, date: invoice.date }))
   })
   const showOverdue = session.notifyOverdue !== false
-  const notices = trackerNotices({
+  const notices = unreadNotices(trackerNotices({
     stock: summary.stock,
     openInvoices,
     today,
     canSeeStock: session.roles.includes('Super Admin') || session.permissions.includes('products.view'),
     muted: showOverdue ? [] : ['invoice_overdue'],
     overdueDays: settingNumber(tables.settings, 'overdue_days', 30),
-  })
+  }), readNoticeIds)
+  const rememberRead = (ids: string[]) => {
+    setReadNoticeIds(ids)
+    localStorage.setItem(noticeReadKey(session.userId), JSON.stringify(ids))
+  }
+  const markOneNotice = (id: string) => rememberRead(markNoticeRead(readNoticeIds, id))
+  const markEveryNotice = () => rememberRead(markAllNoticesRead(readNoticeIds, notices))
   const noticeHref = (item: { id: string; kind: string; text: string }) => {
     if (item.kind === 'low_stock' || item.kind === 'out_of_stock') {
       const code = item.text.split(' is ')[0]
@@ -366,25 +386,67 @@ export default function App() {
   ] as const
   const signOut = () => { sessionStorage.removeItem('hak.unlocked'); writeSession(null); setSession(null); setUnlocked(false) }
 
+  const menuCollapsed = sidebarCollapsed(sidebarWidth)
+  const resizeSidebar = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.type === 'pointerdown') {
+      sidebarDrag.current = { startX: event.clientX, startW: sidebarWidth }
+      try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* pointer capture is optional */ }
+      return
+    }
+    const drag = sidebarDrag.current
+    if (!drag) return
+    const next = storedSidebarWidth(String(drag.startW + event.clientX - drag.startX))
+    setSidebarWidth(next)
+    if (event.type === 'pointerup' || event.type === 'pointercancel') {
+      sidebarDrag.current = null
+      localStorage.setItem('hak.sidebarWidth', String(next))
+    }
+  }
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className="app-shell" style={{ ['--sidebar-width' as string]: `${sidebarWidth}px` }}>
+      <aside className="sidebar" data-collapsed={menuCollapsed ? 'true' : 'false'}>
         <div className="brand">
           <span className="mark" aria-hidden="true"><i /><i /></span>
-          <p className="brand-name">HAK Wholesales</p>
+          <p className={`brand-name${menuCollapsed ? ' sr-only' : ''}`}>HAK Wholesales</p>
         </div>
-        <p className="menu-label">Menu</p>
-        <nav className="nav">
+        <p className={`menu-label${menuCollapsed ? ' sr-only' : ''}`}>Menu</p>
+        <nav className="nav" aria-label="Menu">
           {menu.map((item) => {
             const Icon = menuIcons[item.label] ?? LayoutDashboard
             return (
-              <NavLink key={item.path} to={item.path} end={item.path === '/'} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+              <NavLink key={item.path} to={item.path} end={item.path === '/'} aria-label={item.label} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
                 <Icon aria-hidden="true" strokeWidth={1.75} />
-                {item.label}
+                <span className={menuCollapsed ? 'sr-only' : undefined}>{item.label}</span>
               </NavLink>
             )
           })}
         </nav>
+        <div
+          className="sidebar-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize menu"
+          aria-valuemin={76}
+          aria-valuemax={420}
+          aria-valuenow={sidebarWidth}
+          tabIndex={0}
+          onPointerDown={resizeSidebar}
+          onPointerMove={resizeSidebar}
+          onPointerUp={resizeSidebar}
+          onPointerCancel={resizeSidebar}
+          onDoubleClick={() => {
+            const next = menuCollapsed ? 290 : 76
+            setSidebarWidth(next)
+            localStorage.setItem('hak.sidebarWidth', String(next))
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+            const next = storedSidebarWidth(String(sidebarWidth + (event.key === 'ArrowRight' ? 24 : -24)))
+            setSidebarWidth(next)
+            localStorage.setItem('hak.sidebarWidth', String(next))
+          }}
+        />
       </aside>
       <div className="workspace">
         <header className="topbar">
@@ -420,10 +482,18 @@ export default function App() {
               </button>
               {noticesOpen && (
                 <div className="user-menu notice-menu" role="region" aria-label="Notices">
-                  <p className="user-name">Notices</p>
+                  <div className="notice-head">
+                    <p className="user-name">Notices</p>
+                    <button type="button" className="btn-ghost notice-read" disabled={notices.length === 0} onClick={markEveryNotice}>Mark all as read</button>
+                  </div>
                   <p className="quiet">Stock warnings and invoices that are past due.</p>
                   {notices.length === 0 && <p className="quiet">Nothing needs attention.</p>}
-                  {notices.map((item) => <Link key={item.id} to={noticeHref(item)} onClick={() => setNoticesOpen(false)}>{item.text}</Link>)}
+                  {notices.map((item) => (
+                    <div className="notice-row" key={item.id}>
+                      <Link to={noticeHref(item)} onClick={() => setNoticesOpen(false)}>{item.text}</Link>
+                      <button type="button" className="btn-ghost notice-read" aria-label={`Mark ${item.text} as read`} onClick={() => markOneNotice(item.id)}>Read</button>
+                    </div>
+                  ))}
                   <label className="check">
                     <input type="checkbox" checked={showOverdue} onChange={(event) => void setOverdueNotices(event.target.checked)} />
                     Show overdue invoices
@@ -452,7 +522,7 @@ export default function App() {
         </header>
         <main className="content">
         <Routes>
-          <Route path="/" element={<Dashboard tables={tables} showProfit={showProfit} canBackup={session.roles.includes('Super Admin')} />} />
+          <Route path="/" element={<Dashboard tables={tables} showProfit={showProfit} canBackup={session.roles.includes('Super Admin')} notices={notices.map((item) => ({ ...item, href: noticeHref(item) }))} onMarkRead={markOneNotice} onMarkAllRead={markEveryNotice} />} />
           <Route path="/products" element={<Guard session={session} path="/products"><Products tables={tables} token={session.token} canManage={session.roles.includes('Super Admin') || session.permissions.includes('products.manage')} canAdjust={session.roles.includes('Super Admin') || session.permissions.includes('stock.adjust')} canSeeCost={session.roles.includes('Super Admin') || session.permissions.includes('products.view_cost')} onSaved={refresh} /></Guard>} />
           <Route path="/sales" element={<Guard session={session} path="/sales"><SalesScreen tables={tables} prefix={session.invoicePrefix} userId={session.userId} userName={session.userName} isSuperAdmin={session.roles.includes('Super Admin')} canManageSales={session.permissions.includes('sales.manage')} canEditOwn={session.permissions.includes('sales.edit_own')} onSaved={refresh} /></Guard>} />
           <Route path="/customers" element={<Guard session={session} path="/customers"><SimpleEntry title="Customers" table="customers" fields={['shop_name', 'phone', 'nif', 'city', 'email', 'address', 'credit_limit']} onSaved={refresh} rows={tables.customers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} canMerge={session.roles.includes('Super Admin')} sales={tables.sales} lines={tables.sale_lines} allocations={tables.payment_allocations} payments={tables.customer_payments} /></Guard>} />
@@ -793,7 +863,14 @@ function PinGate({ onUnlock, onLockout }: { onUnlock: () => void; onLockout: () 
   )
 }
 
-function Dashboard({ tables, showProfit, canBackup = false }: { tables: LocalTables; showProfit: boolean; canBackup?: boolean }) {
+function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMarkRead, onMarkAllRead }: {
+  tables: LocalTables
+  showProfit: boolean
+  canBackup?: boolean
+  notices?: { id: string; text: string; href: string }[]
+  onMarkRead?: (id: string) => void
+  onMarkAllRead?: () => void
+}) {
   const [backupError, setBackupError] = useState('')
   const [history, setHistory] = useState<{ at: string; name: string; status: string }[]>(() => {
     try { return JSON.parse(localStorage.getItem('hak.backupHistory') ?? '[]') } catch { return [] }
@@ -849,6 +926,23 @@ function Dashboard({ tables, showProfit, canBackup = false }: { tables: LocalTab
         </div>
       )}
       {backupError && <p className="error">{backupError}</p>}
+      <section className="panel alert-panel" aria-label="Alerts">
+        <div className="notice-head">
+          <h2>Alerts</h2>
+          <button type="button" className="btn-ghost notice-read" disabled={notices.length === 0} onClick={onMarkAllRead}>Mark all as read</button>
+        </div>
+        {notices.length === 0 && <p className="quiet">Nothing needs attention.</p>}
+        {notices.length > 0 && (
+          <ul className="record-list">
+            {notices.map((item) => (
+              <li key={item.id}>
+                <Link to={item.href}>{item.text}</Link>
+                <button type="button" className="btn-ghost notice-read" aria-label={`Mark ${item.text} as read`} onClick={() => onMarkRead?.(item.id)}>Read</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       <h2 className="section-label">This period</h2>
       <div className="metrics">
         <Card label="Sales" to="/sales" value={centsToEuros(view.revenueCents)} note={`Previous period ${centsToEuros(view.previousRevenueCents)}`} tone="brand" />
