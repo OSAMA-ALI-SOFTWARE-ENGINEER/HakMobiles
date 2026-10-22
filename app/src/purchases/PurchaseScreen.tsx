@@ -275,7 +275,7 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
                 <span>{supplier}</span>
                 <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(purchase.id))} onEdit={() => { loadOrder(purchase); setOpen(true) }} onArchive={() => setArchiveId(String(purchase.id))} />
               </span>,
-              status,
+              <span key="status" className={`status-word ${status === 'Received' ? 'ok' : status === 'Partly received' ? 'low' : 'out'}`}>{status}</span>,
               `${receivedQty} received`,
               `${onOrderQty(orderedQty, receivedQty)} on order`,
               centsToEuros(total),
@@ -294,7 +294,16 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
       <ul className="record-list">
         {tables.suppliers.map((supplier) => {
           const money = supplierMoney({ supplierId: String(supplier.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
-          return <li key={String(supplier.id)}>{String(supplier.name)} · Purchased {centsToEuros(money.purchasedCents)} · Paid {centsToEuros(money.paidCents)} · We owe {centsToEuros(money.owedCents)}</li>
+          return (
+            <li key={String(supplier.id)} data-owe={money.owedCents > 0 ? 'yes' : 'no'}>
+              <span className="balance-bits">
+                <strong>{String(supplier.name)}</strong>
+                <span>Purchased {centsToEuros(money.purchasedCents)}</span>
+                <span>Paid {centsToEuros(money.paidCents)}</span>
+                <span className={money.owedCents > 0 ? 'owe' : 'settled'}>We owe {centsToEuros(money.owedCents)}</span>
+              </span>
+            </li>
+          )
         })}
       </ul>
     </section>

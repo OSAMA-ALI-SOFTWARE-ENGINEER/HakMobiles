@@ -294,7 +294,7 @@ export function Pipeline({ tables, canManage, onSaved }: { tables: LocalTables; 
         {PIPELINE_STAGES.map((stage) => {
           const shops = tables.customers.filter((row) => String(row.status ?? 'lead') === stage.id)
           return (
-            <div key={stage.id} className="column" onDragOver={(event) => event.preventDefault()} onDrop={() => { if (dragging) void move(dragging, stage.id) }}>
+            <div key={stage.id} className="column" data-stage={stage.id} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (dragging) void move(dragging, stage.id) }}>
               <h2>{stage.label} <span className="column-count">{shops.length}</span></h2>
               {shops.length === 0 && <p className="hint">Drag a shop here</p>}
               {shops.map((row) => (
@@ -304,7 +304,7 @@ export function Pipeline({ tables, canManage, onSaved }: { tables: LocalTables; 
                   {row.city ? <p>{String(row.city)}</p> : null}
                   {(() => {
                     const next = tables.follow_ups.filter((item) => item.customer_id === row.id && !item.done_at).sort((a, b) => String(a.due_at).localeCompare(String(b.due_at)))[0]
-                    return next ? <p>Next: {String(next.title)} · {String(next.due_at).slice(0, 10)}</p> : null
+                    return next ? <p className="shop-next">Next: {String(next.title)} · <span>{String(next.due_at).slice(0, 10)}</span></p> : null
                   })()}
                 </article>
               ))}
@@ -346,8 +346,8 @@ export function FollowUps({ tables, canManage, onSaved }: { tables: LocalTables;
         {rows.map((row) => {
           const shop = tables.customers.find((customer) => customer.id === row.customer_id)
           return (
-            <li key={String(row.id)}>
-              <span>{String(row.title)} · {shopLabel(shop?.shop_name)} · {String(row.due_at).slice(0, 10)}</span>
+            <li key={String(row.id)} data-bucket={bucket}>
+              <span className="follow-copy"><strong>{String(row.title)}</strong><span> · {shopLabel(shop?.shop_name)}</span><span> · {String(row.due_at).slice(0, 10)}</span></span>
               <span className="quick-actions">
                 {canManage && !row.done_at && (
                   <button type="button" className="btn-ghost" onClick={async () => {

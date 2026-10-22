@@ -17,7 +17,7 @@ import { SalesScreen } from './sales/SalesScreen'
 import { browserQuery, loadLocal, saveLocal, whenBatchIdle, wipeLocal } from './db/browser'
 import { summarizeTables, type LocalTables, emptyTables } from './data/ledger'
 import { loadGoldenSample, replaceBusinessData } from './data/sample'
-import { centsToEuros, centsToInput, fxToEurCents, parseEuros } from './shared/money'
+import { centsToEuros, centsToInput, fxToEurCents, parseEuros, requiredSellingPrice } from './shared/money'
 import { hashPin } from './auth/pin'
 import { canAccess, visibleMenu } from './shared/access'
 import { duplicateGroups, duplicateWarning } from './shared/customers'
@@ -532,7 +532,13 @@ export default function App() {
           <Route path="/calendar" element={<Guard session={session} path="/calendar"><CalendarScreen tables={tables} /></Guard>} />
           <Route path="/suppliers" element={<Guard session={session} path="/suppliers"><SimpleEntry title="Suppliers" table="suppliers" fields={['name', 'first_name', 'last_name', 'email', 'phone', 'whatsapp', 'nif', 'address', 'home_address', 'country']} onSaved={refresh} rows={tables.suppliers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('suppliers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} balanceOf={(row) => supplierMoney({ supplierId: String(row.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments }).owedCents} detail={(row) => {
             const money = supplierMoney({ supplierId: String(row.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
-            return `Purchased ${centsToEuros(money.purchasedCents)} · Paid ${centsToEuros(money.paidCents)} · We owe ${centsToEuros(money.owedCents)}`
+            return (
+              <span className="balance-bits">
+                <span>Purchased {centsToEuros(money.purchasedCents)}</span>
+                <span>Paid {centsToEuros(money.paidCents)}</span>
+                <span className={money.owedCents > 0 ? 'owe' : 'settled'}>We owe {centsToEuros(money.owedCents)}</span>
+              </span>
+            )
           }} previewExtra={(row) => {
             const purchases = tables.purchases.filter((purchase) => purchase.supplier_id === row.id)
             const purchaseIds = new Set(purchases.map((purchase) => purchase.id))
@@ -949,7 +955,7 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
       <div className="metrics">
         <Card label="Sales" to="/sales" value={centsToEuros(view.revenueCents)} note={`Previous period ${centsToEuros(view.previousRevenueCents)}`} tone="brand" />
         {showProfit && <Card label="Net profit" value={centsToEuros(view.netProfitCents)} note={`Previous period ${centsToEuros(view.previousNetProfitCents)}`} tone={view.netProfitCents >= 0 ? 'ok' : 'danger'} />}
-        {showProfit && <Card label="Margin" value={`${view.marginPercent}%`} tone="brand" />}
+        {showProfit && <Card label="Margin" value={`${view.marginPercent}%`} tone={view.marginPercent >= 0 ? 'ok' : 'danger'} />}
         {showProfit && <Card label="Expenses" value={centsToEuros(view.expenseCents)} tone="danger" />}
         {showProfit && <Card label="Cash in" value={centsToEuros(view.cashInCents)} tone="ok" />}
         {showProfit && <Card label="Cash out" value={centsToEuros(view.cashOutCents)} tone="danger" />}
@@ -1036,8 +1042,22 @@ function Card({ label, value, note, tone, to }: { label: string; value: string; 
   return to ? <Link className="metric-link" to={to}>{card}</Link> : card
 }
 
-function Field({ label, hint, wide, children }: { label: string; hint?: string; wide?: boolean; children: ReactNode }) {
-  return <label className={wide ? 'control-line wide-field' : 'control-line'}>{label}{children}{hint && <span className="field-hint">{hint}</span>}</label>
+function Field({ label, hint, wide, error, children }: { label: string; hint?: string; wide?: boolean; error?: string; children: ReactNode }) {
+  return (
+    <div className={wide ? 'control-line wide-field' : 'control-line'}>
+      <label>
+        <span className="field-label">{label}{hint && <span className="info-i" title={hint} aria-hidden="true">i</span>}</span>
+        {children}
+      </label>
+      {hint && <span className="field-hint">{hint}</span>}
+      {error && <p className="field-error" role="alert">{error}</p>}
+    </div>
+  )
+}
+
+function ProductThumb({ path, token, alt, large = false }: { path: string; token: string; alt: string; large?: boolean }) {
+  if (path) return <RecordImage path={path} token={token} alt={alt} large={large} />
+  return <span className={large ? 'photo-placeholder large' : 'photo-placeholder'} aria-hidden="true"><Package size={large ? 36 : 18} /></span>
 }
 
 function withChoice(options: string[], current?: string) {
@@ -1045,14 +1065,16 @@ function withChoice(options: string[], current?: string) {
   return options
 }
 
+const priceMissing = 'Enter the selling price in euros, for example 8,50.'
+
 const productSchema = z.object({
-  code: z.string().min(1),
-  name: z.string().min(1),
+  code: z.string().trim().min(1, 'Enter a short code, for example C1.'),
+  name: z.string().trim().min(1, 'Enter the product name, for example Case.'),
   category: z.string().optional(),
   colour: z.string().optional(),
   model: z.string().optional(),
   barcode: z.string().optional(),
-  sellPrice: z.string().min(1),
+  sellPrice: z.string().refine((value) => requiredSellingPrice(value) != null, priceMissing),
   alertLevel: z.string().optional(),
 })
 
@@ -1084,6 +1106,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
     if (params.get('new') === '1') {
       setEditingId('')
       setPhoto(null)
+      setFormError('')
       form.reset(blankProduct)
       setProductOpen(true)
       setParams({}, { replace: true })
@@ -1114,7 +1137,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
           {!canManage && <p className="lede">You can look products up. Adding or pricing them is limited to managers.</p>}
         </div>
         <div className="quick-actions">
-          {canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setPhoto(null); form.reset(blankProduct); setProductOpen(true) }}>New product</button>}
+          {canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setPhoto(null); setFormError(''); form.reset(blankProduct); setProductOpen(true) }}>New product</button>}
           {canAdjust && <button type="button" className="btn-ghost" onClick={() => { setAdjustId(''); setAdjustNote(''); setAdjustOpen(true) }}>Adjust stock</button>}
         </div>
       </div>
@@ -1137,7 +1160,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
       </div>
       <RecordTable
         caption="Products"
-        headers={['Product', 'Status', 'Quantity', 'Money']}
+        headers={['Product', 'Status', 'Quantity', 'Price']}
         rows={visible.map((row) => {
           const stock = stockByCode.get(String(row.code))
           const qty = stock?.qty ?? 0
@@ -1149,8 +1172,11 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
             cells: [
               <span className="cell-main" key="name">
                 <span className="product-name">
-                  {row.photo_path ? <RecordImage path={String(row.photo_path)} token={token} alt={`${row.code} ${row.name}`} /> : null}
-                  <span>{String(row.code)} {String(row.name)}{row.category ? ` · ${row.category}` : ''}</span>
+                  <ProductThumb path={row.photo_path ? String(row.photo_path) : ''} token={token} alt={`${row.code} ${row.name}`} />
+                  <span className="product-meta">
+                    <span>{String(row.code)} {String(row.name)}</span>
+                    {row.category ? <small>{String(row.category)}</small> : null}
+                  </span>
                 </span>
                 <RowActions
                   canWrite={canManage}
@@ -1160,6 +1186,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
                     if (!source) return
                     setEditingId(String(source.id))
                     setPhoto(source.photo_path == null ? null : String(source.photo_path))
+                    setFormError(Number(source.sell_price) > 0 ? '' : priceMissing)
                     form.reset({
                       code: String(source.code ?? ''),
                       name: String(source.name ?? ''),
@@ -1167,7 +1194,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
                       colour: String(source.colour ?? ''),
                       model: String(source.model ?? ''),
                       barcode: String(source.barcode ?? ''),
-                      sellPrice: centsToInput(Number(source.sell_price ?? 0)),
+                      sellPrice: Number(source.sell_price) > 0 ? centsToInput(Number(source.sell_price)) : '',
                       alertLevel: String(source.alert_level ?? 10),
                     })
                     setProductOpen(true)
@@ -1177,17 +1204,20 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
               </span>,
               status,
               `${qty} pcs`,
-              canSeeCost && qty !== 0 ? `Average cost ${centsToEuros(average)}` : '—',
+              <span className="price-stack" key="price">
+                {Number(row.sell_price) > 0 ? <span>{centsToEuros(Number(row.sell_price))}</span> : <span className="owe">No selling price</span>}
+                {canSeeCost && qty !== 0 ? <span className="quiet">Average cost {centsToEuros(average)}</span> : null}
+              </span>,
             ],
           }
         })}
       />
       {canManage && (
         <Popup title={editingId ? 'Edit product' : 'New product'} open={productOpen} onClose={() => setProductOpen(false)}>
-        <form className="form-grid" onSubmit={form.handleSubmit(async (values) => {
-          const sellPrice = parseEuros(values.sellPrice)
+        <form className="form-grid two" onSubmit={form.handleSubmit(async (values) => {
+          const sellPrice = requiredSellingPrice(values.sellPrice)
           if (sellPrice == null) {
-            setFormError('Enter the selling price in euros, for example 8,50.')
+            setFormError(priceMissing)
             return
           }
           const existing = tables.products.find((row) => row.id === editingId)
@@ -1217,17 +1247,18 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
           setProductOpen(false)
           await onSaved()
         })}>
-          <Field label="Code"><input placeholder="Code" className="control" {...form.register('code')} /></Field>
-          <Field label="Product name"><input placeholder="Name" className="control" {...form.register('name')} /></Field>
-          <Field label="Product category"><input placeholder="Category" className="control" list="product-categories" {...form.register('category')} /></Field>
+          <Field label="Code" hint="A short unique code, for example C1." error={form.formState.errors.code?.message}><input placeholder="C1" aria-label="Code" className="control" {...form.register('code')} /></Field>
+          <Field label="Product name" hint="What you sell, for example Case." error={form.formState.errors.name?.message}><input placeholder="Name" aria-label="Product name" className="control" {...form.register('name')} /></Field>
+          <Field label="Product category" hint="Cases, Chargers, Cables or Protection. Pick one you already use."><input placeholder="Category" aria-label="Product category" className="control" list="product-categories" {...form.register('category')} /></Field>
           <datalist id="product-categories">{categoryChoices.map((item) => <option key={item} value={item} />)}</datalist>
-          <Field label="Colour"><input placeholder="Colour" className="control" list="product-colours" {...form.register('colour')} /></Field>
+          <Field label="Colour" hint="Optional. Black, White, Clear, or another colour from Settings."><input placeholder="Black" aria-label="Colour" className="control" list="product-colours" {...form.register('colour')} /></Field>
           <datalist id="product-colours">{colourChoices.map((item) => <option key={item} value={item} />)}</datalist>
-          <Field label="Model"><input placeholder="Model" className="control" {...form.register('model')} /></Field>
-          <Field label="Barcode"><input placeholder="Barcode" className="control" {...form.register('barcode')} /></Field>
-          <Field label="Selling price (EUR)"><input placeholder="Selling price" className="control" {...form.register('sellPrice')} /></Field>
-          <Field label="Alert level"><input placeholder="Alert level" className="control" {...form.register('alertLevel')} /></Field>
-          <label className="control-line">Photo
+          <Field label="Model" hint="Optional. The phone or device this product fits."><input placeholder="iPhone 15" aria-label="Model" className="control" {...form.register('model')} /></Field>
+          <Field label="Barcode" hint="Optional. The number on the product barcode."><input placeholder="Barcode" aria-label="Barcode" className="control" {...form.register('barcode')} /></Field>
+          <Field label="Selling price (EUR)" hint="Required. The price you charge a shop, in euros. Example 8,50." error={form.formState.errors.sellPrice?.message ?? (formError || undefined)}><input placeholder="Selling price" aria-label="Selling price" aria-invalid={form.formState.errors.sellPrice || formError ? true : undefined} className="control" {...form.register('sellPrice')} /></Field>
+          <Field label="Alert level" hint="Warn when the pieces in stock fall to this number. Example 10."><input placeholder="10" aria-label="Alert level" className="control" {...form.register('alertLevel')} /></Field>
+          <label className="control-line wide-field">Photo
+            <span className="field-hint">Optional for now. A placeholder is shown until you add a photo.</span>
             <input aria-label="Photo" type="file" accept="image/*" className="control" onChange={(event) => {
               const file = event.target.files?.[0]
               if (!file) { setPhoto(null); return }
@@ -1236,9 +1267,8 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
               reader.readAsDataURL(file)
             }} />
           </label>
-          {photo && <RecordImage path={photo} token={token} alt="Chosen photo" large />}
-          {formError && <p className="error">{formError}</p>}
-          <button className="btn">{editingId ? 'Save changes' : 'Save product'}</button>
+          <div className="form-span">{photo ? <RecordImage path={photo} token={token} alt="Chosen photo" large /> : <span className="photo-placeholder large" aria-hidden="true"><Package size={36} /></span>}</div>
+          <button className="btn form-span">{editingId ? 'Save changes' : 'Save product'}</button>
         </form>
         </Popup>
       )}
@@ -1247,13 +1277,13 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
           const stock = stockByCode.get(String(row.code))
           return (
             <div key={String(row.id)}>
-              {row.photo_path ? <RecordImage path={String(row.photo_path)} token={token} alt={`${row.code} ${row.name}`} large /> : null}
+              <ProductThumb path={row.photo_path ? String(row.photo_path) : ''} token={token} alt={`${row.code} ${row.name}`} large />
               <FactList items={[
                 { label: 'Product', value: `${row.code} ${row.name}` },
                 { label: 'Category', value: String(row.category ?? '') },
                 { label: 'Colour', value: String(row.colour ?? '') },
                 { label: 'Model', value: String(row.model ?? '') },
-                { label: 'Price', value: centsToEuros(Number(row.sell_price ?? 0)) },
+                { label: 'Price', value: Number(row.sell_price) > 0 ? centsToEuros(Number(row.sell_price)) : 'No selling price' },
                 { label: 'Alert', value: String(row.alert_level ?? 10) },
                 { label: 'Stock', value: `${stock?.qty ?? 0} pcs ${stock?.status ?? 'OUT'}` },
                 ...(row.barcode ? [{ label: 'Barcode', value: String(row.barcode) }] : []),
@@ -1349,7 +1379,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
   )
 }
 
-function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, isSuperAdmin = false, canMerge = false, sales = [], lines = [], allocations = [], payments = [], detail, balanceOf, previewExtra }: { title: string; table: string; fields: string[]; rows: Record<string, unknown>[]; onSaved: () => Promise<void>; canManage?: boolean; isSuperAdmin?: boolean; canMerge?: boolean; sales?: Record<string, unknown>[]; lines?: Record<string, unknown>[]; allocations?: Record<string, unknown>[]; payments?: Record<string, unknown>[]; detail?: (row: Record<string, unknown>) => string; balanceOf?: (row: Record<string, unknown>) => number; previewExtra?: (row: Record<string, unknown>) => ReactNode }) {
+function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, isSuperAdmin = false, canMerge = false, sales = [], lines = [], allocations = [], payments = [], detail, balanceOf, previewExtra }: { title: string; table: string; fields: string[]; rows: Record<string, unknown>[]; onSaved: () => Promise<void>; canManage?: boolean; isSuperAdmin?: boolean; canMerge?: boolean; sales?: Record<string, unknown>[]; lines?: Record<string, unknown>[]; allocations?: Record<string, unknown>[]; payments?: Record<string, unknown>[]; detail?: (row: Record<string, unknown>) => ReactNode; balanceOf?: (row: Record<string, unknown>) => number; previewExtra?: (row: Record<string, unknown>) => ReactNode }) {
   const [error, setError] = useState('')
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [open, setOpen] = useState(false)
@@ -1371,7 +1401,41 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
     setParams({}, { replace: true })
   }, [params, setParams, table])
   const labels = { shop_name: 'Shop name', phone: 'Phone', nif: 'NIF', city: 'City', email: 'Email', address: table === 'suppliers' ? 'Shop address' : 'Address', home_address: 'Home address', credit_limit: 'Credit limit (EUR)', name: 'Name', country: 'Country', first_name: 'First name', last_name: 'Last name', whatsapp: 'WhatsApp' } as Record<string, string>
-  const hints = { nif: 'Portuguese tax number, 9 digits. Optional.', whatsapp: 'Optional. Leave empty to use the phone number.' } as Record<string, string>
+  const hints = (table === 'customers' ? {
+    shop_name: 'The name on the shop front. This is how the shop appears on invoices.',
+    phone: 'Portuguese mobile or landline, so you can call or WhatsApp the shop.',
+    nif: 'Portuguese tax number, 9 digits. Optional. Example 123456789.',
+    city: 'The town or city, for example Lisboa or Porto.',
+    email: 'Where invoices and statements are sent. Optional.',
+    address: 'Street and door number of the shop.',
+    credit_limit: 'The most this shop can owe, in euros. Leave empty for no limit.',
+  } : {
+    name: 'The company name. This is how the supplier appears on purchases.',
+    first_name: 'The person you speak to. Optional.',
+    last_name: 'Family name of that person. Optional.',
+    email: 'Where orders and statements are sent. Optional.',
+    phone: 'Portuguese mobile or landline.',
+    whatsapp: 'Optional. Leave empty to use the phone number.',
+    nif: 'Portuguese tax number, 9 digits. Optional.',
+    address: 'Street and door number of the shop or warehouse.',
+    home_address: 'Optional home address, if it is different from the shop.',
+    country: 'Defaults to Portugal.',
+  }) as Record<string, string>
+  const placeholders = {
+    shop_name: 'Loja Central',
+    phone: '910 000 000',
+    nif: '123456789',
+    city: 'Lisboa',
+    email: 'loja@example.pt',
+    address: 'Rua Augusta 12',
+    home_address: 'Rua do Ouro 5',
+    credit_limit: '500,00',
+    name: 'Lisbon Parts',
+    first_name: 'Ana',
+    last_name: 'Silva',
+    whatsapp: '910 000 000',
+    country: 'Portugal',
+  } as Record<string, string>
   const fieldValue = (row: Record<string, unknown>, field: string) => field === 'credit_limit' ? (row.credit_limit == null || row.credit_limit === '' ? '' : centsToInput(Number(row.credit_limit))) : (row[field] == null ? '' : String(row[field]))
   const owed = (id: string) => {
     const row = rows.find((item) => item.id === id)
@@ -1389,7 +1453,7 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
     <section className="page">
       <div className="page-head"><div><h1>{title}</h1></div>{canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setDraft(table === 'suppliers' ? { country: 'Portugal' } : {}); setError(''); setOpen(true) }}>{action}</button>}</div>
       <Popup title={editingId ? `Edit ${singular}` : action} open={open} onClose={() => setOpen(false)}>
-      <form className={table === 'suppliers' ? 'form-grid two' : 'form-grid'} onSubmit={async (event) => {
+      <form className="form-grid two" onSubmit={async (event) => {
         event.preventDefault()
         const existing = rows.find((item) => item.id === editingId)
         const row: Record<string, unknown> = { ...(existing ?? {}), id: editingId || uuidv7(), deleted_at: null }
@@ -1426,13 +1490,13 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
       }}>
         {fields.map((field) => {
           const label = labels[field] ?? field
-          const long = table === 'suppliers' && (field === 'address' || field === 'home_address')
+          const long = field === 'address' || field === 'home_address'
           return (
-            <Field key={field} label={label} hint={table === 'suppliers' ? hints[field] : undefined} wide={long}>
+            <Field key={field} label={label} hint={hints[field]} wide={long}>
               {long ? (
-                <textarea name={field} aria-label={label} placeholder={label} className="control" rows={2} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
+                <textarea name={field} aria-label={label} placeholder={placeholders[field] ?? label} className="control" rows={2} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
               ) : (
-                <input name={field} aria-label={label} placeholder={field === 'nif' ? '123456789' : label} required={field === 'shop_name' || field === 'name'} className="control" type={field === 'email' ? 'email' : field === 'phone' || field === 'whatsapp' ? 'tel' : 'text'} inputMode={field === 'nif' ? 'numeric' : undefined} maxLength={field === 'nif' ? 9 : undefined} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
+                <input name={field} aria-label={label} placeholder={placeholders[field] ?? label} required={field === 'shop_name' || field === 'name'} className="control" type={field === 'email' ? 'email' : field === 'phone' || field === 'whatsapp' ? 'tel' : 'text'} inputMode={field === 'nif' ? 'numeric' : field === 'credit_limit' ? 'decimal' : undefined} maxLength={field === 'nif' ? 9 : undefined} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
               )}
             </Field>
           )
@@ -1501,13 +1565,14 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
           }} />
           if (table === 'customers') {
             const last = sales.filter((sale) => sale.customer_id === row.id).map((sale) => String(sale.date ?? '')).filter(Boolean).sort().at(-1)
+            const due = owed(String(row.id))
             return {
               key: String(row.id),
               cells: [
                 <Link key="shop" to={`/customers/${String(row.id)}`} aria-label={`Open ${String(row.shop_name ?? '')}`}>{String(row.shop_name ?? '')}</Link>,
-                String(row.phone ?? ''),
-                String(row.city ?? ''),
-                centsToEuros(owed(String(row.id))),
+                String(row.phone ?? '').trim() || '—',
+                String(row.city ?? '').trim() || '—',
+                <span key="owed" className={due > 0 ? 'owe' : 'settled'}>{centsToEuros(due)}</span>,
                 last ? last.slice(0, 10) : '—',
                 actions,
               ],
@@ -1694,7 +1759,7 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
       {kind === 'supplier' && <ul className="record-list">
         {tables.suppliers.map((supplier) => {
           const money = supplierMoney({ supplierId: String(supplier.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
-          return <li key={String(supplier.id)}>{String(supplier.name)} · We owe {centsToEuros(money.owedCents)}</li>
+          return <li key={String(supplier.id)} data-owe={money.owedCents > 0 ? 'yes' : 'no'}>{String(supplier.name)} · We owe {centsToEuros(money.owedCents)}</li>
         })}
       </ul>}
       {kind === 'customer' && <h2>Customer payments</h2>}

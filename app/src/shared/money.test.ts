@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { centsToEuros, centsToInput, parseEuros } from './money'
+import { centsToEuros, centsToInput, parseEuros, requiredSellingPrice } from './money'
 
 describe('centsToEuros', () => {
   it('uses the Portuguese euro format', () => {
@@ -23,5 +23,12 @@ describe('parseEuros', () => {
   it('fills an input with a comma decimal', () => {
     expect(centsToInput(1000)).toBe('10,00')
     expect(parseEuros(centsToInput(850))).toBe(850)
+  })
+
+  it('requires a selling price above zero', () => {
+    expect(requiredSellingPrice('8,50')).toBe(850)
+    expect(requiredSellingPrice('')).toBeNull()
+    expect(requiredSellingPrice('0')).toBeNull()
+    expect(requiredSellingPrice('0,00')).toBeNull()
   })
 })

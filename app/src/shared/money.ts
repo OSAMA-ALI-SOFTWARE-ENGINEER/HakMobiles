@@ -24,6 +24,12 @@ export function parseEuros(value: string): Cents | null {
   return eurosToCents(amount)
 }
 
+export function requiredSellingPrice(value: string): Cents | null {
+  const cents = parseEuros(value)
+  if (cents == null || cents <= 0) return null
+  return cents
+}
+
 export function centsToInput(cents: Cents): string {
   const absolute = Math.abs(Math.round(cents))
   const euros = Math.floor(absolute / 100)
