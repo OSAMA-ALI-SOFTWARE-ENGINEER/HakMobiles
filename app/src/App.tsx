@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { Link, NavLink, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeftRight, BarChart3, Bell, Calendar, CalendarDays, ChevronDown, Eye, EyeOff, Kanban, LayoutDashboard, LogOut, Package, Receipt, ScrollText, Search, Settings, Shield, ShoppingBag, Store, Truck, Wallet, type LucideIcon } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -29,6 +29,7 @@ import { lisbonToday } from './shared/sales'
 import { shopLabel } from './shared/labels'
 import { settingList, settingNumber } from './shared/settings'
 import { FactList, Popup } from './ui/Popup'
+import { PageSkeleton, skeletonKindForPath } from './ui/PageSkeleton'
 import { ArchiveDialog, RowActions } from './ui/RecordActions'
 import { RecordTable } from './ui/RecordTable'
 import { ArchivedPanel } from './ui/ArchivedPanel'
@@ -135,6 +136,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(readSession)
   const [status, setStatus] = useState('Offline')
   const [tables, setTables] = useState<LocalTables>(emptyTables())
+  const [booksReady, setBooksReady] = useState(false)
   const [notice, setNotice] = useState('')
   const [unlocked, setUnlocked] = useState(sessionStorage.getItem('hak.unlocked') === 'yes')
   const [query, setQuery] = useState('')
@@ -155,7 +157,9 @@ export default function App() {
   }
 
   useEffect(() => {
-    refresh().catch(() => setNotice('Local database is still opening.'))
+    refresh()
+      .catch(() => setNotice('Local database is still opening.'))
+      .finally(() => setBooksReady(true))
   }, [])
 
   useEffect(() => {
@@ -521,6 +525,7 @@ export default function App() {
           </div>
         </header>
         <main className="content">
+        <ModuleBody ready={booksReady}>
         <Routes>
           <Route path="/" element={<Dashboard tables={tables} showProfit={showProfit} canBackup={session.roles.includes('Super Admin')} notices={notices.map((item) => ({ ...item, href: noticeHref(item) }))} onMarkRead={markOneNotice} onMarkAllRead={markEveryNotice} />} />
           <Route path="/products" element={<Guard session={session} path="/products"><Products tables={tables} token={session.token} canManage={session.roles.includes('Super Admin') || session.permissions.includes('products.manage')} canAdjust={session.roles.includes('Super Admin') || session.permissions.includes('stock.adjust')} canSeeCost={session.roles.includes('Super Admin') || session.permissions.includes('products.view_cost')} onSaved={refresh} /></Guard>} />
@@ -562,6 +567,7 @@ export default function App() {
           <Route path="/admin/users" element={<Guard session={session} path="/admin/users"><Admin token={session.token} /></Guard>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </ModuleBody>
         </main>
       </div>
       <nav className="bottom-nav" aria-label="Primary">
@@ -672,6 +678,12 @@ function ProfileDialog({ session, open, onClose, onSaved }: { session: Session; 
       </form>
     </Popup>
   )
+}
+
+function ModuleBody({ ready, children }: { ready: boolean; children: ReactNode }) {
+  const { pathname } = useLocation()
+  if (!ready) return <PageSkeleton kind={skeletonKindForPath(pathname)} />
+  return children
 }
 
 function Guard({ session, path, children }: { session: Session; path: string; children: ReactNode }) {
@@ -2047,6 +2059,7 @@ function TransferEntry({ tables, canManage = true, onSaved }: { tables: LocalTab
 
 function Admin({ token }: { token: string }) {
   const [users, setUsers] = useState<Record<string, unknown>[]>([])
+  const [usersLoading, setUsersLoading] = useState(true)
   const [temporary, setTemporary] = useState('')
   const [tab, setTab] = useState<'Users' | 'Roles' | 'Devices'>('Users')
   const [open, setOpen] = useState(false)
@@ -2058,8 +2071,13 @@ function Admin({ token }: { token: string }) {
   const [userQuery, setUserQuery] = useState('')
   const navigate = useNavigate()
   useEffect(() => {
-    api('/api/users', {}, token).then((result) => setUsers((result.data as Record<string, unknown>[]) ?? [])).catch(() => navigate('/'))
+    setUsersLoading(true)
+    api('/api/users', {}, token)
+      .then((result) => setUsers((result.data as Record<string, unknown>[]) ?? []))
+      .catch(() => navigate('/'))
+      .finally(() => setUsersLoading(false))
   }, [token, navigate])
+  if (usersLoading) return <PageSkeleton kind="table" />
   return (
     <section className="page">
       <div className="tabs">

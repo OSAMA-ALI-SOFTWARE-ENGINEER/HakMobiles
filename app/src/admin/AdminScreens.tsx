@@ -1,17 +1,22 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { PageSkeleton, SkeletonRows } from '../ui/PageSkeleton'
 import { RecordTable } from '../ui/RecordTable'
 
 export function ActivityScreen({ token }: { token: string }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
   useEffect(() => {
+    setLoading(true)
     api('/api/activity', {}, token)
       .then((result) => setRows((result.data as Record<string, unknown>[]) ?? []))
       .catch(() => setError('The activity log could not be loaded.'))
+      .finally(() => setLoading(false))
   }, [token])
   const shown = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(query.trim().toLowerCase()))
+  if (loading) return <PageSkeleton kind="activity" />
   return (
     <section className="page">
       <div className="page-head">
@@ -44,11 +49,13 @@ export function RolesPanel({ token }: { token: string }) {
   const [roles, setRoles] = useState<{ id: number; name: string; permissions: string[] }[]>([])
   const [catalog, setCatalog] = useState<string[]>([])
   const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(true)
   useEffect(() => {
+    setLoading(true)
     api('/api/roles', {}, token).then((result) => {
       setRoles((result.data as { id: number; name: string; permissions: string[] }[]) ?? [])
       setCatalog((result.catalog as string[]) ?? [])
-    }).catch(() => setMessage('Roles could not be loaded.'))
+    }).catch(() => setMessage('Roles could not be loaded.')).finally(() => setLoading(false))
   }, [token])
 
   async function save(role: { id: number; name: string; permissions: string[] }) {
@@ -56,6 +63,7 @@ export function RolesPanel({ token }: { token: string }) {
     setMessage(`${role.name} updated.`)
   }
 
+  if (loading) return <SkeletonRows count={3} />
   return (
     <div className="page">
       <h2>Roles</h2>
@@ -86,11 +94,16 @@ export function RolesPanel({ token }: { token: string }) {
 export function DevicesPanel({ token }: { token: string }) {
   const [devices, setDevices] = useState<Record<string, unknown>[]>([])
   const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(true)
   async function load() {
     const result = await api('/api/devices', {}, token)
     setDevices((result.data as Record<string, unknown>[]) ?? [])
   }
-  useEffect(() => { void load().catch(() => setMessage('Devices could not be loaded.')) }, [token])
+  useEffect(() => {
+    setLoading(true)
+    void load().catch(() => setMessage('Devices could not be loaded.')).finally(() => setLoading(false))
+  }, [token])
+  if (loading) return <SkeletonRows count={4} />
   return (
     <div className="page">
       <h2>Devices</h2>
