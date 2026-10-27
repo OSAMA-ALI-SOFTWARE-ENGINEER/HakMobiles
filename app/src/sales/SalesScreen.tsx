@@ -7,6 +7,7 @@ import { lineRevenue } from '../shared/calc'
 import { shopFigures, stageAfterOrders } from '../shared/crm'
 import { shopLabel } from '../shared/labels'
 import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
+import { documentBrand } from '../shared/brand'
 import { settingJson } from '../shared/settings'
 import { isMonthLocked, priceForShop, type SpecialPrice } from '../shared/work'
 import { allocationsFromCredit, invoiceStandings, paymentCredit } from '../shared/payments'
@@ -164,6 +165,7 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
       lines,
       totalCents: lines.reduce((sum, line) => sum + line.totalCents, 0),
       footer: String(tables.settings.find((row) => row.key === 'invoice_footer')?.value ?? ''),
+      brand: documentBrand(tables.settings),
     }
   }
 
@@ -417,15 +419,16 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
             today,
           })[0]
           const shopLines = [customer?.phone, customer?.city, customer?.nif ? `NIF ${customer.nif}` : '', customer?.address].map((part) => String(part ?? '').trim()).filter(Boolean)
+          const brand = model.brand ?? documentBrand([])
           return (
             <>
               <article className="invoice-sheet">
-                <header className="invoice-head">
+                <header className="invoice-head" style={{ background: brand.color }}>
                   <div className="invoice-lockup">
-                    <span className="mark" aria-hidden="true"><i /><i /></span>
+                    {brand.logo ? <img className="invoice-logo" src={brand.logo} alt="" /> : <span className="mark" aria-hidden="true"><i style={{ background: brand.color }} /><i style={{ background: brand.color }} /></span>}
                     <div>
-                      <p className="invoice-brand">HAK Wholesales</p>
-                      <p className="invoice-kicker">Internal invoice</p>
+                      <p className="invoice-brand">{brand.name}</p>
+                      <p className="invoice-kicker">{brand.kicker}</p>
                     </div>
                   </div>
                   <div className="invoice-meta">
@@ -467,9 +470,9 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
                   <div className="due"><dt>Left</dt><dd>{centsToEuros(Math.max(0, model.totalCents - (standing?.paidCents ?? 0)))}</dd></div>
                 </dl>
                 </div>
-                <footer className="invoice-foot">
-                  <span className="mark" aria-hidden="true"><i /><i /></span>
-                  <p>{model.footer || 'Internal invoice. Not a certified tax document.'}</p>
+                <footer className="invoice-foot" style={{ background: brand.color }}>
+                  {brand.logo ? <img className="invoice-logo small" src={brand.logo} alt="" /> : <span className="mark" aria-hidden="true"><i style={{ background: brand.color }} /><i style={{ background: brand.color }} /></span>}
+                  <p>{model.footer || brand.footer}</p>
                 </footer>
               </article>
               <div className="invoice-actions">

@@ -5,6 +5,7 @@ import { AGEING_BUCKETS, ageingSheet, analysisSheet, buildReports, customerState
 import { lisbonToday } from '../shared/sales'
 import { supplierMoney } from '../shared/purchases'
 import { slowProductIds } from '../shared/work'
+import { documentBrand } from '../shared/brand'
 import { downloadStatementPdf } from './statementPdf'
 
 const views = ['Profit and loss', 'By product', 'By customer', 'By category', 'By month', 'Best sellers', 'Slow stock', 'Suppliers', 'Cash received', 'Expenses', 'Ageing'] as const
@@ -179,7 +180,7 @@ export function ReportsScreen({ tables, showProfit }: { tables: LocalTables; sho
                     {AGEING_BUCKETS.map((bucket) => <td key={bucket}>{centsToEuros(row.buckets[bucket])}</td>)}
                     <td>{centsToEuros(row.totalCents)}</td>
                     <td>
-                      <button type="button" className="btn-ghost" onClick={() => void downloadStatementPdf(statement)}>Statement</button>
+                      <button type="button" className="btn-ghost" onClick={() => void downloadStatementPdf(statement, documentBrand(tables.settings))}>Statement</button>
                       <a className="btn-ghost" href={mailHref(statement.shop, statement.email, text)}>Email</a>
                     </td>
                   </tr>

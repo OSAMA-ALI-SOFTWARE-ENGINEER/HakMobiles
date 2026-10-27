@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { v7 as uuidv7 } from 'uuid'
 import { saveLocal } from '../db/browser'
 import type { LocalTables } from '../data/ledger'
+import { BRAND_PRESETS, brandPreset, documentBrand } from '../shared/brand'
 import { settingJson, settingList, settingNumber } from '../shared/settings'
 import { centsToEuros } from '../shared/money'
 import { Popup } from '../ui/Popup'
@@ -12,6 +13,30 @@ const fallbackCategories = ['Cases', 'Chargers', 'Cables', 'Protection']
 const fallbackColours = ['Black', 'White', 'Clear']
 const fallbackMethods = ['Cash', 'Bank Transfer', 'MB Way', 'Card', 'Cheque']
 const fallbackExpenses = ['Rent', 'Freight', 'Utilities', 'Other']
+
+function fitLogo(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('The logo could not be read.'))
+    reader.onload = () => {
+      const image = new Image()
+      image.onload = () => {
+        const limit = 160
+        const scale = Math.min(1, limit / Math.max(image.width, image.height))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(image.width * scale))
+        canvas.height = Math.max(1, Math.round(image.height * scale))
+        const context = canvas.getContext('2d')
+        if (!context) { reject(new Error('The logo could not be prepared.')); return }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height)
+        resolve(canvas.toDataURL('image/png'))
+      }
+      image.onerror = () => reject(new Error('Choose a PNG or JPG logo.'))
+      image.src = String(reader.result)
+    }
+    reader.readAsDataURL(file)
+  })
+}
 
 function ListEditor({ label, items, onChange }: { label: string; items: string[]; onChange: (next: string[]) => void }) {
   const [draft, setDraft] = useState('')
@@ -58,6 +83,14 @@ export function SettingsScreen({ tables, onSaved, onLoadSample, onImport }: {
   const [companyName, setCompanyName] = useState(String(tables.settings.find((row) => row.key === 'company_name')?.value ?? 'HAK Wholesales'))
   const [companyNif, setCompanyNif] = useState(String(tables.settings.find((row) => row.key === 'company_nif')?.value ?? ''))
   const [companyAddress, setCompanyAddress] = useState(String(tables.settings.find((row) => row.key === 'company_address')?.value ?? ''))
+  const look = documentBrand(tables.settings)
+  const [companyPhone, setCompanyPhone] = useState(look.phone)
+  const [companyEmail, setCompanyEmail] = useState(look.email)
+  const [logo, setLogo] = useState(look.logo)
+  const [preset, setPreset] = useState(look.preset)
+  const [kicker, setKicker] = useState(look.kicker)
+  const [statementFooter, setStatementFooter] = useState(look.statementFooter)
+  const [designError, setDesignError] = useState('')
   const locks = settingJson<string[]>(tables.settings, 'period_locks', [])
   const [confirmSample, setConfirmSample] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
@@ -116,12 +149,53 @@ export function SettingsScreen({ tables, onSaved, onLoadSample, onImport }: {
         void saveSetting('company_name', companyName)
         void saveSetting('company_nif', companyNif)
         void saveSetting('company_address', companyAddress)
+        void saveSetting('company_phone', companyPhone)
+        void saveSetting('company_email', companyEmail)
       }}>
         <h2>Company profile</h2>
         <label className="control-line">Business name<input aria-label="Business name" className="control" value={companyName} onChange={(event) => setCompanyName(event.target.value)} /></label>
         <label className="control-line">Company NIF<input aria-label="Company NIF" className="control" value={companyNif} onChange={(event) => setCompanyNif(event.target.value)} /></label>
         <label className="control-line">Address<input aria-label="Company address" className="control" value={companyAddress} onChange={(event) => setCompanyAddress(event.target.value)} /></label>
+        <label className="control-line">Phone<input aria-label="Company phone" className="control" value={companyPhone} onChange={(event) => setCompanyPhone(event.target.value)} /></label>
+        <label className="control-line">Email<input aria-label="Company email" className="control" type="email" value={companyEmail} onChange={(event) => setCompanyEmail(event.target.value)} /></label>
         <button className="btn">Save company profile</button>
+      </form>
+      <form className="panel form-grid" onSubmit={(event) => {
+        event.preventDefault()
+        void saveSetting('document_design', { logo, color: preset, kicker, statementFooter })
+        setDesignError('')
+      }}>
+        <h2>Logo and documents</h2>
+        <p className="quiet">The logo, colour, and headings are used on the menu, the invoice, and the statement PDF.</p>
+        <div className="doc-preview" style={{ background: brandPreset(preset).color }}>
+          {logo ? <img src={logo} alt="" /> : null}
+          <div>
+            <p>{companyName || 'HAK Wholesales'}</p>
+            <p>{kicker || 'Internal invoice'}</p>
+          </div>
+        </div>
+        <label className="control-line">Logo
+          <input aria-label="Company logo" className="control" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
+            const file = event.target.files?.[0]
+            event.currentTarget.value = ''
+            if (!file) return
+            void fitLogo(file).then(setLogo).catch((caught: unknown) => setDesignError(caught instanceof Error ? caught.message : 'The logo could not be prepared.'))
+          }} />
+        </label>
+        {logo && <button type="button" className="btn-ghost" onClick={() => setLogo('')}>Remove logo</button>}
+        <label className="control-line">Brand colour
+          <select aria-label="Brand colour" className="control" value={preset} onChange={(event) => setPreset(brandPreset(event.target.value).id)}>
+            {BRAND_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </label>
+        <label className="control-line">Invoice heading
+          <input aria-label="Invoice heading" className="control" value={kicker} onChange={(event) => setKicker(event.target.value)} />
+        </label>
+        <label className="control-line">Statement footer
+          <textarea aria-label="Statement footer" className="control" rows={2} value={statementFooter} onChange={(event) => setStatementFooter(event.target.value)} />
+        </label>
+        {designError && <p className="error">{designError}</p>}
+        <button className="btn">Save document design</button>
       </form>
       <form className="panel form-grid" onSubmit={(event) => {
         event.preventDefault()

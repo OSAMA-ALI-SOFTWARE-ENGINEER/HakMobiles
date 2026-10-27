@@ -39,6 +39,7 @@ import { sidebarCollapsed, storedSidebarWidth } from './shared/sidebar'
 import { customerStatement } from './shared/reports'
 import { onOrderQty, purchaseLedgerRows, supplierMoney } from './shared/purchases'
 import { backupName, dashboardView, dueOn, type DashboardPeriod } from './shared/dashboard'
+import { documentBrand } from './shared/brand'
 import { addDays, dueWithin, recurringDue, reorderSuggestion, settleTransfers, type RecurringCost } from './shared/work'
 import { withoutInlineMedia, shouldKeepLocalMedia } from './shared/photos'
 import { syncFailureNotice } from './sync/engine'
@@ -303,7 +304,7 @@ export default function App() {
         }
         const waiting = await browserQuery('SELECT op_id FROM outbox').catch(() => [])
         const detail = syncFailureNotice(error)
-        setNotice(navigator.onLine ? detail : '')
+        setNotice(detail)
         setStatus(navigator.onLine ? 'Needs attention' : `Offline with ${waiting.length} waiting`)
       }
     }
@@ -406,6 +407,7 @@ export default function App() {
   const signOut = () => { sessionStorage.removeItem('hak.unlocked'); writeSession(null); setSession(null); setUnlocked(false) }
 
   const menuCollapsed = sidebarCollapsed(sidebarWidth)
+  const brand = documentBrand(tables.settings)
   const resizeSidebar = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.type === 'pointerdown') {
       sidebarDrag.current = { startX: event.clientX, startW: sidebarWidth }
@@ -426,8 +428,8 @@ export default function App() {
     <div className="app-shell" style={{ ['--sidebar-width' as string]: `${sidebarWidth}px` }}>
       <aside className="sidebar" data-collapsed={menuCollapsed ? 'true' : 'false'}>
         <div className="brand">
-          <span className="mark" aria-hidden="true"><i /><i /></span>
-          <p className={`brand-name${menuCollapsed ? ' sr-only' : ''}`}>HAK Wholesales</p>
+          {brand.logo ? <img className="brand-logo" src={brand.logo} alt="" /> : <span className="mark" aria-hidden="true"><i /><i /></span>}
+          <p className={`brand-name${menuCollapsed ? ' sr-only' : ''}`}>{brand.name}</p>
         </div>
         <p className={`menu-label${menuCollapsed ? ' sr-only' : ''}`}>Menu</p>
         <nav className="nav" aria-label="Menu">

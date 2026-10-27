@@ -13,6 +13,7 @@ import { shopLabel } from '../shared/labels'
 import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
 import { customerStatement, statementMailUrl, statementWhatsAppUrl } from '../shared/reports'
 import { lisbonToday } from '../shared/sales'
+import { documentBrand } from '../shared/brand'
 import { downloadStatementPdf } from '../reports/statementPdf'
 import { Popup } from '../ui/Popup'
 import { ArchiveDialog, RowActions } from '../ui/RecordActions'
@@ -70,7 +71,7 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
           {phone && <a className="btn-ghost" href={whatsAppLink(phone)} target="_blank" rel="noreferrer">WhatsApp</a>}
           {phone && <a className="btn-ghost" href={statementWhatsAppUrl(statement)} target="_blank" rel="noreferrer">WhatsApp statement</a>}
           {typeof shop.email === 'string' && shop.email !== '' && <a className="btn-ghost" href={statementMailUrl(statement)}>Email statement</a>}
-          <button type="button" className="btn-ghost" onClick={() => void downloadStatementPdf(statement)}>Statement</button>
+          <button type="button" className="btn-ghost" onClick={() => void downloadStatementPdf(statement, documentBrand(tables.settings))}>Statement</button>
           {canManage && <button type="button" className="btn-ghost" onClick={() => { setShopError(''); setShopOpen(true) }}>Edit shop</button>}
           {canManage && <button type="button" className="btn-ghost" onClick={() => {
             const block = archiveBlock({ blocked: figures.owedCents > 0, isSuperAdmin, message: 'This shop still has an open invoice.' })
