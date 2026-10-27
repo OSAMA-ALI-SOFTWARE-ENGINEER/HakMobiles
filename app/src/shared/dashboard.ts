@@ -10,7 +10,7 @@ export function mondayIndex(date: string): number {
   return (weekday + 6) % 7
 }
 
-export type DashboardPeriod = 'week' | 'month' | 'quarter' | 'year' | 'twelve' | 'custom'
+export type DashboardPeriod = 'today' | 'week' | 'month' | 'last' | 'quarter' | 'year' | 'twelve' | 'custom'
 
 function addDays(date: string, days: number): string {
   const value = new Date(`${date.slice(0, 10)}T00:00:00Z`)
@@ -21,12 +21,18 @@ function addDays(date: string, days: number): string {
 export function periodRange(period: DashboardPeriod, today: string): { start: string; end: string } {
   const year = Number(today.slice(0, 4))
   const month = Number(today.slice(5, 7))
+  if (period === 'today') return { start: today, end: today }
   if (period === 'week') {
     const weekday = new Date(`${today}T00:00:00Z`).getUTCDay()
     const mondayOffset = weekday === 0 ? 6 : weekday - 1
     return { start: addDays(today, -mondayOffset), end: today }
   }
   if (period === 'month') return { start: `${today.slice(0, 7)}-01`, end: today }
+  if (period === 'last') {
+    const start = new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 10)
+    const end = new Date(Date.UTC(year, month - 1, 0)).toISOString().slice(0, 10)
+    return { start, end }
+  }
   if (period === 'quarter') {
     const startMonth = Math.floor((month - 1) / 3) * 3 + 1
     return { start: `${year}-${String(startMonth).padStart(2, '0')}-01`, end: today }

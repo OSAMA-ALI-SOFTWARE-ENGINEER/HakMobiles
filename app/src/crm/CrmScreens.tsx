@@ -4,6 +4,9 @@ import { v7 as uuidv7 } from 'uuid'
 import { saveLocal } from '../db/browser'
 import type { LocalTables } from '../data/ledger'
 import { PIPELINE_STAGES, followUpBucket, shopFigures } from '../shared/crm'
+import { invoiceStandings } from '../shared/payments'
+import { settingJson, settingNumber } from '../shared/settings'
+import { addDays, paymentReminderDrafts, priceForShop, shopsToMarkInactive, type SpecialPrice } from '../shared/work'
 import { whatsAppLink, isValidPortugueseNif } from '../shared/nif'
 import { archiveBlock } from '../shared/records'
 import { shopLabel } from '../shared/labels'
@@ -22,7 +25,7 @@ function todayStamp() {
 export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }: { tables: LocalTables; canManage: boolean; isSuperAdmin?: boolean; onSaved: () => Promise<void> }) {
   const { id = '' } = useParams()
   const shop = tables.customers.find((row) => row.id === id)
-  const [tab, setTab] = useState<'Sales' | 'Payments' | 'Activities' | 'Follow-ups' | 'Notes'>('Activities')
+  const [tab, setTab] = useState<'Sales' | 'Payments' | 'Activities' | 'Follow-ups' | 'Notes' | 'Special prices'>('Activities')
   const [notes, setNotes] = useState(String(shop?.notes ?? ''))
   useEffect(() => { setNotes(String(shop?.notes ?? '')) }, [id, shop?.notes])
   const [error, setError] = useState('')
@@ -143,7 +146,7 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
         </label>
       )}
       <div className="tabs">
-        {(['Sales', 'Payments', 'Activities', 'Follow-ups', 'Notes'] as const).map((name) => (
+        {(['Sales', 'Payments', 'Activities', 'Follow-ups', 'Notes', 'Special prices'] as const).map((name) => (
           <button key={name} type="button" className={tab === name ? 'active' : ''} aria-pressed={tab === name} onClick={() => setTab(name)}>{name}</button>
         ))}
       </div>
@@ -216,6 +219,32 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
           }} />
         </>
       )}
+      {tab === 'Special prices' && (
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          const data = new FormData(event.currentTarget)
+          const cents = parseEuros(String(data.get('price') ?? ''))
+          const productId = String(data.get('product_id') ?? '')
+          if (cents == null || !productId) return
+          const current = settingJson<SpecialPrice[]>(tables.settings, 'special_prices', [])
+          const next = [...current.filter((row) => !(row.customerId === id && row.productId === productId)), { customerId: id, productId, cents }]
+          const existing = tables.settings.find((row) => row.key === 'special_prices')
+          await saveLocal('settings', { id: existing?.id ?? uuidv7(), key: 'special_prices', value: JSON.stringify(next), deleted_at: null })
+          await onSaved()
+        }}>
+          <label className="control-line">Product
+            <select name="product_id" aria-label="Special price product" className="control">{tables.products.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.code)} {String(row.name)}</option>)}</select>
+          </label>
+          <label className="control-line">Shop price<input name="price" aria-label="Shop price" className="control" placeholder="8,50" /></label>
+          <button className="btn">Save special price</button>
+          <ul className="record-list">
+            {settingJson<SpecialPrice[]>(tables.settings, 'special_prices', []).filter((row) => row.customerId === id).map((row) => {
+              const product = tables.products.find((item) => item.id === row.productId)
+              return <li key={row.productId}>{product ? `${product.code} ${product.name}` : 'Product'} · {centsToEuros(row.cents)} <span className="quiet">List {centsToEuros(priceForShop(Number(product?.sell_price ?? 0), [], '', ''))}</span></li>
+            })}
+          </ul>
+        </form>
+      )}
       {tab === 'Follow-ups' && (
         <>
           {canManage && <button type="button" className="btn" onClick={() => { setFollowId(''); setFollowTitle(''); setFollowDue(todayStamp()); setFollowOpen(true) }}>New follow-up</button>}
@@ -277,18 +306,52 @@ export function Customer360({ tables, canManage, isSuperAdmin = false, onSaved }
 
 export function Pipeline({ tables, canManage, onSaved }: { tables: LocalTables; canManage: boolean; onSaved: () => Promise<void> }) {
   const [dragging, setDragging] = useState('')
+  const [movedShop, setMovedShop] = useState<{ id: string; name: string } | null>(null)
+  const [quickName, setQuickName] = useState('')
+  const [quickPhone, setQuickPhone] = useState('')
+  useEffect(() => {
+    const days = settingNumber(tables.settings, 'inactive_days', 60)
+    const ids = shopsToMarkInactive(tables.customers.map((row) => ({
+      id: String(row.id),
+      status: String(row.status ?? 'lead'),
+      lastOrder: tables.sales.filter((sale) => sale.customer_id === row.id).map((sale) => String(sale.date ?? '')).filter(Boolean).sort().at(-1) ?? '',
+    })), lisbonToday(), days)
+    if (ids.length === 0) return
+    void (async () => {
+      for (const id of ids) {
+        const shop = tables.customers.find((row) => row.id === id)
+        if (shop) await saveLocal('customers', { ...shop, status: 'inactive' })
+      }
+      await onSaved()
+    })()
+  }, [tables.customers, tables.sales, tables.settings])
 
   async function move(customerId: string, status: string) {
     const shop = tables.customers.find((row) => row.id === customerId)
     if (!shop || !canManage) return
     await saveLocal('customers', { ...shop, status })
     await saveLocal('customer_activities', { id: uuidv7(), customer_id: customerId, type: 'note', body: `Moved to ${status.replace(/_/g, ' ')}`, happened_at: new Date().toISOString() })
+    setMovedShop({ id: customerId, name: String(shop.shop_name) })
     await onSaved()
   }
 
   return (
     <section className="page">
       <div className="page-head"><h1>Pipeline</h1></div>
+      {canManage && (
+        <form className="filters" onSubmit={async (event) => {
+          event.preventDefault()
+          if (!quickName.trim() || !quickPhone.trim()) return
+          await saveLocal('customers', { id: uuidv7(), shop_name: quickName.trim(), phone: quickPhone.trim(), status: 'lead', deleted_at: null })
+          setQuickName('')
+          setQuickPhone('')
+          await onSaved()
+        }}>
+          <input aria-label="Quick shop name" className="control" placeholder="Shop name" value={quickName} onChange={(event) => setQuickName(event.target.value)} />
+          <input aria-label="Quick shop phone" className="control" placeholder="Phone" value={quickPhone} onChange={(event) => setQuickPhone(event.target.value)} />
+          <button className="btn">Quick add</button>
+        </form>
+      )}
       {tables.customers.length === 0 && <p className="quiet">No shops yet. <Link to="/customers?new=1">Add a shop</Link></p>}
       <div className="board">
         {PIPELINE_STAGES.map((stage) => {
@@ -312,6 +375,21 @@ export function Pipeline({ tables, canManage, onSaved }: { tables: LocalTables; 
           )
         })}
       </div>
+      <Popup title="Add a follow-up?" open={movedShop != null} onClose={() => setMovedShop(null)}>
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault()
+          if (!movedShop) return
+          const data = new FormData(event.currentTarget)
+          await saveLocal('follow_ups', { id: uuidv7(), customer_id: movedShop.id, title: data.get('title'), type: 'call', due_at: data.get('due_at'), deleted_at: null })
+          setMovedShop(null)
+          await onSaved()
+        }}>
+          <p className="lede">{movedShop?.name} moved. Add a follow-up, or close this.</p>
+          <label className="control-line">Title<input name="title" aria-label="Follow-up title" className="control" required defaultValue="Call back" /></label>
+          <label className="control-line">Due date<input name="due_at" aria-label="Due date" type="date" className="control" required defaultValue={todayStamp()} /></label>
+          <button className="btn">Save follow-up</button>
+        </form>
+      </Popup>
     </section>
   )
 }
@@ -325,6 +403,26 @@ export function FollowUps({ tables, canManage, onSaved }: { tables: LocalTables;
     setCreating(true)
     setFollowParams({}, { replace: true })
   }, [followParams, setFollowParams])
+  useEffect(() => {
+    const today = todayStamp()
+    const drafts = paymentReminderDrafts({
+      invoices: invoiceStandings({
+        sales: tables.sales.map((sale) => ({ id: String(sale.id), invoice_no: String(sale.invoice_no ?? ''), customer_id: String(sale.customer_id), date: sale.date == null ? null : String(sale.date) })),
+        lines: tables.sale_lines.map((line) => ({ sale_id: String(line.sale_id), qty: Number(line.qty), unit_price: Number(line.unit_price), discount: Number(line.discount ?? 0) })),
+        allocations: tables.payment_allocations.map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
+        today,
+        overdueDays: settingNumber(tables.settings, 'overdue_days', 30),
+      }).map((invoice) => ({ id: invoice.id, customerId: invoice.customerId, invoiceNo: invoice.invoiceNo, overdue: invoice.overdue })),
+      followUps: tables.follow_ups.map((row) => ({ autoReason: row.auto_reason == null ? null : String(row.auto_reason) })),
+    })
+    if (drafts.length === 0) return
+    void (async () => {
+      for (const draft of drafts) {
+        await saveLocal('follow_ups', { id: uuidv7(), customer_id: draft.customerId, title: draft.title, type: 'payment reminder', due_at: today, auto_reason: draft.autoReason, deleted_at: null })
+      }
+      await onSaved()
+    })()
+  }, [tables.sales, tables.sale_lines, tables.payment_allocations, tables.follow_ups, tables.settings])
   const [editingId, setEditingId] = useState('')
   const [title, setTitle] = useState('')
   const [due, setDue] = useState(todayStamp())
@@ -357,6 +455,13 @@ export function FollowUps({ tables, canManage, onSaved }: { tables: LocalTables;
                     await onSaved()
                   }}>Complete</button>
                 )}
+                {canManage && !row.done_at && (
+                  <button type="button" className="btn-ghost" onClick={async () => {
+                    await saveLocal('follow_ups', { ...row, due_at: addDays(today, 1) })
+                    await onSaved()
+                  }}>Tomorrow</button>
+                )}
+                {canManage && !row.done_at && shop?.phone && <a className="btn-ghost" href={whatsAppLink(String(shop.whatsapp || shop.phone))} target="_blank" rel="noreferrer">WhatsApp</a>}
                 <RowActions canWrite={canManage} onEdit={() => { setEditingId(String(row.id)); setTitle(String(row.title ?? '')); setDue(String(row.due_at).slice(0, 10)) }} onArchive={() => setArchiveId(String(row.id))} />
               </span>
             </li>
@@ -367,7 +472,7 @@ export function FollowUps({ tables, canManage, onSaved }: { tables: LocalTables;
         <form className="form-grid" onSubmit={async (event) => {
           event.preventDefault()
           const data = new FormData(event.currentTarget)
-          await saveLocal('follow_ups', { id: uuidv7(), customer_id: data.get('customer_id'), title: data.get('title'), type: 'call', due_at: data.get('due_at'), deleted_at: null })
+          await saveLocal('follow_ups', { id: uuidv7(), customer_id: data.get('customer_id'), title: data.get('title'), type: data.get('type'), due_at: data.get('due_at'), notes: data.get('notes') || null, deleted_at: null })
           setCreating(false)
           await onSaved()
         }}>
@@ -377,9 +482,20 @@ export function FollowUps({ tables, canManage, onSaved }: { tables: LocalTables;
           <label className="control-line">Title
             <input name="title" aria-label="Follow-up title" required className="control" value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
+          <label className="control-line">Type
+            <select name="type" aria-label="Follow-up type" className="control" defaultValue="call">
+              <option value="call">Call</option>
+              <option value="visit">Visit</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="payment reminder">Payment reminder</option>
+              <option value="delivery">Delivery</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
           <label className="control-line">Due date
             <input name="due_at" aria-label="Due date" type="date" required className="control" value={due} onChange={(event) => setDue(event.target.value)} />
           </label>
+          <label className="control-line">Notes<textarea name="notes" aria-label="Follow-up notes" className="control" rows={2} /></label>
           <button className="btn">Save follow-up</button>
         </form>
       </Popup>

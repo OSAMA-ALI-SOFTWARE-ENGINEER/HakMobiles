@@ -31,4 +31,11 @@ describe('notices', () => {
     expect(unreadNotices(notices, one)).toHaveLength(notices.length - 1)
     expect(unreadNotices(notices, markAllNoticesRead([], notices))).toHaveLength(0)
   })
+
+  it('shows a notice again the next day after it was marked read', () => {
+    const notices = trackerNotices({ stock, openInvoices, today: '2026-10-27', canSeeStock: true, muted: [] })
+    const read = markNoticeRead([], notices[0].id, '2026-10-27')
+    expect(unreadNotices(notices, read, '2026-10-27').some((notice) => notice.id === notices[0].id)).toBe(false)
+    expect(unreadNotices(notices, read, '2026-10-28').some((notice) => notice.id === notices[0].id)).toBe(true)
+  })
 })

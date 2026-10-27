@@ -7,6 +7,8 @@ import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
 import { landedUnitCosts, onOrderQty, purchaseLedgerRows, purchaseLineTotal, purchaseOrderTotal, purchaseStatus, supplierMoney } from '../shared/purchases'
 import { editReasonGate } from '../shared/records'
 import { lisbonToday } from '../shared/sales'
+import { settingJson } from '../shared/settings'
+import { isMonthLocked } from '../shared/work'
 import { ArchiveDialog, RowActions } from '../ui/RecordActions'
 import { ArchivedPanel } from '../ui/ArchivedPanel'
 import { RecordTable } from '../ui/RecordTable'
@@ -31,6 +33,8 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
   const [open, setOpen] = useState(false)
   const [purchaseParams, setPurchaseParams] = useSearchParams()
   useEffect(() => {
+    const product = purchaseParams.get('product')
+    if (product) setProductId(product)
     if (purchaseParams.get('new') !== '1') return
     setEditingId('')
     setOpen(true)
@@ -39,6 +43,7 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
   const [editingId, setEditingId] = useState('')
   const [previewId, setPreviewId] = useState('')
   const [orderDate, setOrderDate] = useState(lisbonToday())
+  const [invoiceNo, setInvoiceNo] = useState('')
   const [reason, setReason] = useState('')
   const [warning, setWarning] = useState('')
   const [archiveId, setArchiveId] = useState('')
@@ -90,6 +95,7 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
     const [first, ...rest] = lines
     chooseSupplier(String(purchase.supplier_id))
     setOrderDate(String(purchase.date ?? today).slice(0, 10))
+    setInvoiceNo(String(purchase.invoice_no ?? ''))
     setShipping(Number(purchase.extra_cost ?? 0) === 0 ? '' : centsToInput(Number(purchase.extra_cost)))
     setProductId(first ? String(first.product_id) : '')
     setQty(first ? String(first.qty) : '')
@@ -122,6 +128,10 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
       <Popup title={editingId ? 'Edit purchase' : 'New purchase'} open={open} onClose={() => setOpen(false)}>
       <form className="form-grid" onSubmit={async (event) => {
         event.preventDefault()
+        if (isMonthLocked(editingId ? orderDate : today, settingJson<string[]>(tables.settings, 'period_locks', []))) {
+          setWarning('This month is locked. Unlock it in Settings before saving.')
+          return
+        }
         if (!reasonGate.canSave) {
           setWarning(reasonGate.message)
           return
@@ -152,6 +162,7 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
           id: purchaseId,
           supplier_id: selectedSupplier,
           date: existing ? orderDate : today,
+          invoice_no: invoiceNo.trim() || null,
           extra_cost: shippingCents,
           deleted_at: null,
         })
@@ -196,6 +207,7 @@ export function PurchaseScreen({ tables, canManage = true, onSaved }: { tables: 
           </div>
         ))}
         <button type="button" className="btn-ghost" onClick={() => setExtras((current) => [...current, { productId: selectedProduct, qty: '1', cost: '', received: '' }])}>Add line</button>
+        <label className="control-line">Supplier invoice<input aria-label="Supplier invoice" className="control" value={invoiceNo} onChange={(event) => setInvoiceNo(event.target.value)} placeholder="Invoice no." /></label>
         <label className="control-line">Shipping (EUR)<input name="shipping" aria-label="Shipping" placeholder="Shipping" className="control" value={shipping} onChange={(event) => setShipping(event.target.value)} /></label>
         <p className="quiet">Euros. Spread across the lines by quantity.</p>
         {draft.length > 0 && (

@@ -2,7 +2,7 @@ import { isOverdue } from './payments'
 
 export interface TrackerNotice {
   id: string
-  kind: 'low_stock' | 'out_of_stock' | 'invoice_overdue'
+  kind: 'low_stock' | 'out_of_stock' | 'invoice_overdue' | 'follow_up' | 'large_payment'
   text: string
 }
 
@@ -13,6 +13,9 @@ export function trackerNotices(input: {
   canSeeStock: boolean
   muted: string[]
   overdueDays?: number
+  followUps?: { id: string; title: string; due: string; done: boolean }[]
+  payments?: { id: string; label: string; amountCents: number; date: string }[]
+  largePaymentCents?: number
 }): TrackerNotice[] {
   const notices: TrackerNotice[] = []
   if (input.canSeeStock && !input.muted.includes('low_stock')) {
@@ -28,20 +31,41 @@ export function trackerNotices(input: {
       }
     }
   }
+  if (!input.muted.includes('follow_up')) {
+    for (const item of input.followUps ?? []) {
+      if (!item.done && item.due.slice(0, 10) <= input.today) {
+        notices.push({ id: `follow-${item.id}`, kind: 'follow_up', text: `${item.title} is due` })
+      }
+    }
+  }
+  const large = input.largePaymentCents ?? 50000
+  if (!input.muted.includes('large_payment')) {
+    for (const payment of input.payments ?? []) {
+      if (payment.date.slice(0, 10) === input.today && payment.amountCents >= large) {
+        notices.push({ id: `pay-${payment.id}`, kind: 'large_payment', text: `${payment.label} received a large payment` })
+      }
+    }
+  }
   return notices
 }
 
-export function unreadNotices(notices: TrackerNotice[], readIds: string[]): TrackerNotice[] {
+export function readToken(id: string, day: string): string {
+  return `${day}:${id}`
+}
+
+export function unreadNotices(notices: TrackerNotice[], readIds: string[], day?: string): TrackerNotice[] {
   const read = new Set(readIds)
-  return notices.filter((notice) => !read.has(notice.id))
+  return notices.filter((notice) => !read.has(day ? readToken(notice.id, day) : notice.id))
 }
 
-export function markNoticeRead(readIds: string[], id: string): string[] {
-  return readIds.includes(id) ? readIds : [...readIds, id]
+export function markNoticeRead(readIds: string[], id: string, day?: string): string[] {
+  const key = day ? readToken(id, day) : id
+  return readIds.includes(key) ? readIds : [...readIds, key]
 }
 
-export function markAllNoticesRead(readIds: string[], notices: TrackerNotice[]): string[] {
-  return [...new Set([...readIds, ...notices.map((notice) => notice.id)])]
+export function markAllNoticesRead(readIds: string[], notices: TrackerNotice[], day?: string): string[] {
+  const keys = notices.map((notice) => (day ? readToken(notice.id, day) : notice.id))
+  return [...new Set([...readIds, ...keys])]
 }
 
 export function noticeReadKey(userId: string): string {

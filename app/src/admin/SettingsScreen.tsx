@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { v7 as uuidv7 } from 'uuid'
 import { saveLocal } from '../db/browser'
 import type { LocalTables } from '../data/ledger'
-import { settingList, settingNumber } from '../shared/settings'
+import { settingJson, settingList, settingNumber } from '../shared/settings'
 import { centsToEuros } from '../shared/money'
 import { Popup } from '../ui/Popup'
 
@@ -53,6 +53,12 @@ export function SettingsScreen({ tables, onSaved, onLoadSample, onImport }: {
   const [saved, setSaved] = useState(false)
   const [open, setOpen] = useState(false)
   const [overdue, setOverdue] = useState(String(settingNumber(tables.settings, 'overdue_days', 30)))
+  const [inactive, setInactive] = useState(String(settingNumber(tables.settings, 'inactive_days', 60)))
+  const [lockMonth, setLockMonth] = useState('')
+  const [companyName, setCompanyName] = useState(String(tables.settings.find((row) => row.key === 'company_name')?.value ?? 'HAK Wholesales'))
+  const [companyNif, setCompanyNif] = useState(String(tables.settings.find((row) => row.key === 'company_nif')?.value ?? ''))
+  const [companyAddress, setCompanyAddress] = useState(String(tables.settings.find((row) => row.key === 'company_address')?.value ?? ''))
+  const locks = settingJson<string[]>(tables.settings, 'period_locks', [])
   const [confirmSample, setConfirmSample] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
   const [restoreFile, setRestoreFile] = useState<File | null>(null)
@@ -97,6 +103,39 @@ export function SettingsScreen({ tables, onSaved, onLoadSample, onImport }: {
           <input aria-label="Overdue days" className="control" type="number" min={1} value={overdue} onChange={(event) => setOverdue(event.target.value)} />
         </label>
         <button className="btn">Save overdue days</button>
+      </form>
+      <form className="panel form-grid" onSubmit={(event) => { event.preventDefault(); void saveSetting('inactive_days', Number(inactive) || 60) }}>
+        <h2>Inactive shops</h2>
+        <label className="control-line">Days without an order
+          <input aria-label="Inactive days" className="control" type="number" min={1} value={inactive} onChange={(event) => setInactive(event.target.value)} />
+        </label>
+        <button className="btn">Save inactive days</button>
+      </form>
+      <form className="panel form-grid" onSubmit={(event) => {
+        event.preventDefault()
+        void saveSetting('company_name', companyName)
+        void saveSetting('company_nif', companyNif)
+        void saveSetting('company_address', companyAddress)
+      }}>
+        <h2>Company profile</h2>
+        <label className="control-line">Business name<input aria-label="Business name" className="control" value={companyName} onChange={(event) => setCompanyName(event.target.value)} /></label>
+        <label className="control-line">Company NIF<input aria-label="Company NIF" className="control" value={companyNif} onChange={(event) => setCompanyNif(event.target.value)} /></label>
+        <label className="control-line">Address<input aria-label="Company address" className="control" value={companyAddress} onChange={(event) => setCompanyAddress(event.target.value)} /></label>
+        <button className="btn">Save company profile</button>
+      </form>
+      <form className="panel form-grid" onSubmit={(event) => {
+        event.preventDefault()
+        if (!/^\d{4}-\d{2}$/.test(lockMonth)) return
+        const next = locks.includes(lockMonth) ? locks.filter((month) => month !== lockMonth) : [...locks, lockMonth]
+        void saveSetting('period_locks', next)
+        setLockMonth('')
+      }}>
+        <h2>Period lock</h2>
+        <p className="quiet">{locks.length === 0 ? 'No month is locked.' : `Locked: ${locks.join(', ')}`}</p>
+        <label className="control-line">Month
+          <input aria-label="Lock month" className="control" type="month" value={lockMonth} onChange={(event) => setLockMonth(event.target.value)} />
+        </label>
+        <button className="btn">Lock or unlock month</button>
       </form>
       {onLoadSample && (
         <section className="panel data-tools">

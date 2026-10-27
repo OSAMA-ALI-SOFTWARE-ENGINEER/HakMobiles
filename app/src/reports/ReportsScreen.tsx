@@ -3,9 +3,11 @@ import type { LocalTables } from '../data/ledger'
 import { centsToEuros } from '../shared/money'
 import { AGEING_BUCKETS, ageingSheet, analysisSheet, buildReports, customerStatement, sheetToCsv, statementMailUrl, statementShareText, workbookBytes, type SalesGroup } from '../shared/reports'
 import { lisbonToday } from '../shared/sales'
+import { supplierMoney } from '../shared/purchases'
+import { slowProductIds } from '../shared/work'
 import { downloadStatementPdf } from './statementPdf'
 
-const views = ['Profit and loss', 'By product', 'By customer', 'By category', 'By month', 'Ageing'] as const
+const views = ['Profit and loss', 'By product', 'By customer', 'By category', 'By month', 'Best sellers', 'Slow stock', 'Suppliers', 'Cash received', 'Expenses', 'Ageing'] as const
 type View = (typeof views)[number]
 
 function downloadBytes(bytes: Uint8Array, filename: string, type: string) {
@@ -56,7 +58,8 @@ export function ReportsScreen({ tables, showProfit }: { tables: LocalTables; sho
   const [to, setTo] = useState('')
   const today = lisbonToday()
   const reports = useMemo(() => buildReports(tables, { from, to, today }), [tables, from, to, today])
-  const groups = view === 'By customer' ? reports.byCustomer : view === 'By category' ? reports.byCategory : view === 'By month' ? reports.byMonth : reports.byProduct
+  const groups = view === 'By customer' ? reports.byCustomer : view === 'By category' ? reports.byCategory : view === 'By month' ? reports.byMonth : view === 'Best sellers' ? [...reports.byProduct].sort((a, b) => b.pieces - a.pieces).slice(0, 20) : reports.byProduct
+  const salesTable = view === 'By product' || view === 'By customer' || view === 'By category' || view === 'By month' || view === 'Best sellers'
   const sheet = view === 'Ageing'
     ? ageingSheet(reports.ageing.rows)
     : view === 'Profit and loss'
@@ -115,8 +118,45 @@ export function ReportsScreen({ tables, showProfit }: { tables: LocalTables; sho
           {showProfit && reports.previousProfit && <p className="quiet">Previous period net profit {centsToEuros(reports.previousProfit.netProfitCents)}.</p>}
         </>
       )}
-      {view !== 'Profit and loss' && view !== 'Ageing' && groups.length === 0 && <p className="quiet">No sales in this range.</p>}
-      {view !== 'Profit and loss' && view !== 'Ageing' && groups.length > 0 && <Groups groups={groups} showProfit={showProfit} />}
+      {salesTable && groups.length === 0 && <p className="quiet">No sales in this range.</p>}
+      {salesTable && groups.length > 0 && <Groups groups={groups} showProfit={showProfit} />}
+      {view === 'Slow stock' && (
+        <ul className="record-list">
+          {slowProductIds(tables.products.map((row) => ({
+            productId: String(row.id),
+            onHand: reports.profit.stock.find((item) => item.code === row.code)?.qty ?? 0,
+            lastSale: tables.sales.filter((sale) => tables.sale_lines.some((line) => line.sale_id === sale.id && line.product_id === row.id)).map((sale) => String(sale.date ?? '')).sort().at(-1) ?? '',
+          })), today).map((id) => {
+            const product = tables.products.find((row) => row.id === id)
+            return <li key={id}>{product ? `${product.code} ${product.name}` : id}</li>
+          })}
+        </ul>
+      )}
+      {view === 'Suppliers' && (
+        <ul className="record-list">
+          {tables.suppliers.map((row) => {
+            const money = supplierMoney({ supplierId: String(row.id), purchases: tables.purchases, lines: tables.purchase_lines, payments: tables.supplier_payments })
+            return <li key={String(row.id)}>{String(row.name)} · Purchased {centsToEuros(money.purchasedCents)} · Paid {centsToEuros(money.paidCents)} · We owe {centsToEuros(money.owedCents)}</li>
+          })}
+        </ul>
+      )}
+      {view === 'Cash received' && (
+        <ul className="record-list">
+          {tables.partners.map((partner) => {
+            const cents = tables.customer_payments.filter((row) => row.received_by === partner.id).reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
+            return <li key={String(partner.id)}>{String(partner.name)} · {centsToEuros(cents)}</li>
+          })}
+        </ul>
+      )}
+      {view === 'Expenses' && (
+        <ul className="record-list">
+          {[...tables.expenses.reduce((map, row) => {
+            const name = String(row.category || 'Other')
+            map.set(name, (map.get(name) ?? 0) + Number(row.amount_eur ?? row.amount ?? 0))
+            return map
+          }, new Map<string, number>())].map(([name, cents]) => <li key={name}>{name} · {centsToEuros(cents)}</li>)}
+        </ul>
+      )}
       {view === 'Ageing' && (
         <>
           <article className="metric"><span>Ageing total</span><strong className="money">{centsToEuros(reports.ageing.totalCents)}</strong></article>

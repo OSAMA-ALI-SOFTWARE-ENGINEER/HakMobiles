@@ -7,6 +7,8 @@ import { lineRevenue } from '../shared/calc'
 import { shopFigures, stageAfterOrders } from '../shared/crm'
 import { shopLabel } from '../shared/labels'
 import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
+import { settingJson } from '../shared/settings'
+import { isMonthLocked, priceForShop, type SpecialPrice } from '../shared/work'
 import { allocationsFromCredit, invoiceStandings, paymentCredit } from '../shared/payments'
 import {
   averageCostByProduct,
@@ -45,6 +47,8 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
   const [qty, setQty] = useState('')
   const [price, setPrice] = useState('')
   const [discount, setDiscount] = useState('')
+  const [paidNow, setPaidNow] = useState(false)
+  const [paidAmount, setPaidAmount] = useState('')
   const [date, setDate] = useState(lisbonToday())
   const [extras, setExtras] = useState<(DraftLine & { priceText: string })[]>([])
   const [editingId, setEditingId] = useState('')
@@ -134,7 +138,7 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
   const chooseProduct = (id: string) => {
     setProductId(id)
     const product = tables.products.find((row) => row.id === id)
-    if (product) setPrice(centsToInput(Number(product.sell_price)))
+    if (product) setPrice(centsToInput(priceForShop(Number(product.sell_price), settingJson<SpecialPrice[]>(tables.settings, 'special_prices', []), selectedCustomer, id)))
   }
   const shopName = (id: string) => shopLabel(tables.customers.find((row) => row.id === id)?.shop_name)
 
@@ -213,6 +217,10 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
       <Popup title={editingId ? 'Edit sale' : 'New sale'} open={open} onClose={() => setOpen(false)}>
       <form className="form-grid" onSubmit={async (event) => {
         event.preventDefault()
+        if (isMonthLocked(date, settingJson<string[]>(tables.settings, 'period_locks', []))) {
+          setWarning('This month is locked. Unlock it in Settings before saving.')
+          return
+        }
         if (lock.current) return
         lock.current = true
         setBusy(true)
@@ -302,8 +310,19 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
               payments: tables.customer_payments.map((row) => ({ id: String(row.id), customer_id: String(row.customer_id), amount: Number(row.amount), created_at: row.created_at == null ? null : String(row.created_at) })),
               allocations: tables.payment_allocations.map((row) => ({ customer_payment_id: String(row.customer_payment_id), amount: Number(row.amount) })),
             })
-            for (const row of allocationsFromCredit(credit, saleId, total)) {
+            const creditRows = allocationsFromCredit(credit, saleId, total)
+            for (const row of creditRows) {
               await saveLocal('payment_allocations', { id: uuidv7(), customer_payment_id: row.customerPaymentId, sale_id: row.saleId, amount: row.amountCents })
+            }
+            if (paidNow) {
+              const paid = parseEuros(paidAmount)
+              if (paid != null && paid > 0) {
+                const paymentId = uuidv7()
+                const partner = tables.partners.find((row) => row.user_id === userId)
+                const room = Math.max(0, total - creditRows.reduce((sum, row) => sum + row.amountCents, 0))
+                await saveLocal('customer_payments', { id: paymentId, customer_id: selectedCustomer, received_by: partner?.id ?? userId, amount: paid, method: 'Cash', deleted_at: null })
+                if (room > 0) await saveLocal('payment_allocations', { id: uuidv7(), customer_payment_id: paymentId, sale_id: saleId, amount: Math.min(paid, room) })
+              }
             }
             if (customer) {
               const orders = tables.sales.filter((row) => row.customer_id === selectedCustomer).length + 1
@@ -314,6 +333,8 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
           setWarning('')
           setQty('')
           setDiscount('')
+          setPaidNow(false)
+          setPaidAmount('')
           setExtras([])
           setEditingId('')
           setReason('')
@@ -328,6 +349,10 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
         }
       }}>
         <label className="control-line">Shop<select name="customer_id" aria-label="Shop" className="control" value={selectedCustomer} onChange={(event) => chooseCustomer(event.target.value)}>{tables.customers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.shop_name)}</option>)}</select></label>
+        <label className="control-line">Barcode<input aria-label="Scan barcode" placeholder="Scan barcode" className="control" onChange={(event) => {
+          const match = tables.products.find((row) => String(row.barcode ?? '') !== '' && String(row.barcode) === event.target.value.trim())
+          if (match) chooseProduct(String(match.id))
+        }} /></label>
         <div className="line-grid">
           <label className="control-line">Product<select name="product_id" aria-label="Product" className="control" value={selectedProduct} onChange={(event) => chooseProduct(event.target.value)}>{tables.products.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.code)} {String(row.name)}</option>)}</select></label>
           <label className="control-line">Quantity<input name="qty" type="number" aria-label="Quantity" placeholder="Quantity" required className="control" value={qty} onChange={(event) => setQty(event.target.value)} /></label>
@@ -358,6 +383,8 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
         }}>Add line</button>
         <label className="control-line">Sale date<input name="date" type="date" aria-label="Sale date" className="control" value={date} onChange={(event) => setDate(event.target.value)} /></label>
         <p className="lede">Invoice total {centsToEuros(total)}</p>
+        {!editingId && <label className="check"><input type="checkbox" checked={paidNow} onChange={(event) => setPaidNow(event.target.checked)} /> Paid now</label>}
+        {paidNow && !editingId && <label className="control-line">Received now<input aria-label="Received now" className="control" value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} placeholder="Amount" /></label>}
         {liveWarning && <p className="warn" role="status">{liveWarning}</p>}
         {editingId && saleEditGate({
           isSuperAdmin,

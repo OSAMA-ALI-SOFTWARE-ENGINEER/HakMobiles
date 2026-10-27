@@ -6,6 +6,7 @@ import { RecordTable } from '../ui/RecordTable'
 export function ActivityScreen({ token }: { token: string }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [query, setQuery] = useState('')
+  const [who, setWho] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   useEffect(() => {
@@ -15,7 +16,8 @@ export function ActivityScreen({ token }: { token: string }) {
       .catch(() => setError('The activity log could not be loaded.'))
       .finally(() => setLoading(false))
   }, [token])
-  const shown = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(query.trim().toLowerCase()))
+  const people = [...new Set(rows.map((row) => String(row.causer ?? 'System')))]
+  const shown = rows.filter((row) => (who === '' || String(row.causer ?? 'System') === who) && JSON.stringify(row).toLowerCase().includes(query.trim().toLowerCase()))
   if (loading) return <PageSkeleton kind="activity" />
   return (
     <section className="page">
@@ -25,6 +27,12 @@ export function ActivityScreen({ token }: { token: string }) {
           <p className="lede">A record of who changed what. It cannot be edited.</p>
         </div>
       </div>
+      <label className="control-line">Person
+        <select aria-label="Activity person" className="control" value={who} onChange={(event) => setWho(event.target.value)}>
+          <option value="">Everyone</option>
+          {people.map((name) => <option key={name}>{name}</option>)}
+        </select>
+      </label>
       <label className="control-line">Find activity
         <input aria-label="Find activity" className="control" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search user, action or value" />
       </label>

@@ -21,13 +21,13 @@ import { centsToEuros, centsToInput, fxToEurCents, parseEuros, requiredSellingPr
 import { hashPin } from './auth/pin'
 import { canAccess, visibleMenu } from './shared/access'
 import { duplicateGroups, duplicateWarning } from './shared/customers'
-import { isValidPortugueseNif } from './shared/nif'
-import { allocationsForPayment, invoiceStandings } from './shared/payments'
+import { isValidPortugueseNif, whatsAppLink } from './shared/nif'
+import { allocationsForPayment, invoiceStandings, paymentCredit } from './shared/payments'
 import { editReasonGate, archiveBlock } from './shared/records'
 import { filterProducts } from './shared/products'
 import { lisbonToday } from './shared/sales'
 import { shopLabel } from './shared/labels'
-import { settingList, settingNumber } from './shared/settings'
+import { settingJson, settingList, settingNumber } from './shared/settings'
 import { FactList, Popup } from './ui/Popup'
 import { PageSkeleton, skeletonKindForPath } from './ui/PageSkeleton'
 import { ArchiveDialog, RowActions } from './ui/RecordActions'
@@ -37,8 +37,9 @@ import { UndoToast, offerUndo } from './ui/undo'
 import { markAllNoticesRead, markNoticeRead, noticeReadKey, trackerNotices, unreadNotices } from './shared/notices'
 import { sidebarCollapsed, storedSidebarWidth } from './shared/sidebar'
 import { customerStatement } from './shared/reports'
-import { purchaseLedgerRows, supplierMoney } from './shared/purchases'
-import { backupName, dashboardView, type DashboardPeriod } from './shared/dashboard'
+import { onOrderQty, purchaseLedgerRows, supplierMoney } from './shared/purchases'
+import { backupName, dashboardView, dueOn, type DashboardPeriod } from './shared/dashboard'
+import { addDays, dueWithin, recurringDue, reorderSuggestion, settleTransfers, type RecurringCost } from './shared/work'
 import { withoutInlineMedia, shouldKeepLocalMedia } from './shared/photos'
 import { syncFailureNotice } from './sync/engine'
 import { tablesFromWorkbook, tablesToWorkbook } from './shared/trackerImport'
@@ -147,6 +148,7 @@ export default function App() {
   const [desktopNew, setDesktopNew] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(() => storedSidebarWidth(localStorage.getItem('hak.sidebarWidth')))
   const [readNoticeIds, setReadNoticeIds] = useState<string[]>([])
+  const [mutedLocal, setMutedLocal] = useState<string[]>([])
   const sidebarDrag = useRef<{ startX: number; startW: number } | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
   const navigate = useNavigate()
@@ -167,6 +169,9 @@ export default function App() {
     try {
       const stored = JSON.parse(localStorage.getItem(noticeReadKey(session.userId)) ?? '[]')
       setReadNoticeIds(Array.isArray(stored) ? stored.filter((id) => typeof id === 'string') : [])
+      const muted = JSON.parse(localStorage.getItem(`hak.notice.mute.${session.userId}`) ?? '[]')
+      setMutedLocal(Array.isArray(muted) ? muted.filter((id) => typeof id === 'string') : [])
+      document.documentElement.dataset.density = localStorage.getItem('hak.density') === 'compact' ? 'compact' : ''
     } catch {
       setReadNoticeIds([])
     }
@@ -335,21 +340,31 @@ export default function App() {
     return statement.invoices.filter((invoice) => invoice.openCents > 0).map((invoice) => ({ id: invoice.invoiceNo, label: statement.shop, date: invoice.date }))
   })
   const showOverdue = session.notifyOverdue !== false
+  const mutedNotices = [...(showOverdue ? [] : ['invoice_overdue']), ...mutedLocal]
   const notices = unreadNotices(trackerNotices({
     stock: summary.stock,
     openInvoices,
     today,
     canSeeStock: session.roles.includes('Super Admin') || session.permissions.includes('products.view'),
-    muted: showOverdue ? [] : ['invoice_overdue'],
+    muted: mutedNotices,
     overdueDays: settingNumber(tables.settings, 'overdue_days', 30),
-  }), readNoticeIds)
+    followUps: tables.follow_ups.map((row) => ({ id: String(row.id), title: String(row.title ?? 'Follow-up'), due: String(row.due_at ?? ''), done: Boolean(row.done_at) })),
+    payments: tables.customer_payments.map((row) => ({
+      id: String(row.id),
+      label: String(tables.customers.find((shop) => shop.id === row.customer_id)?.shop_name ?? 'A shop'),
+      amountCents: Number(row.amount ?? 0),
+      date: String(row.created_at ?? '').slice(0, 10),
+    })),
+  }), readNoticeIds, today)
   const rememberRead = (ids: string[]) => {
     setReadNoticeIds(ids)
     localStorage.setItem(noticeReadKey(session.userId), JSON.stringify(ids))
   }
-  const markOneNotice = (id: string) => rememberRead(markNoticeRead(readNoticeIds, id))
-  const markEveryNotice = () => rememberRead(markAllNoticesRead(readNoticeIds, notices))
+  const markOneNotice = (id: string) => rememberRead(markNoticeRead(readNoticeIds, id, today))
+  const markEveryNotice = () => rememberRead(markAllNoticesRead(readNoticeIds, notices, today))
   const noticeHref = (item: { id: string; kind: string; text: string }) => {
+    if (item.kind === 'follow_up') return '/follow-ups'
+    if (item.kind === 'large_payment') return '/payments'
     if (item.kind === 'low_stock' || item.kind === 'out_of_stock') {
       const code = item.text.split(' is ')[0]
       const product = tables.products.find((row) => String(row.code) === code)
@@ -530,7 +545,7 @@ export default function App() {
           <Route path="/" element={<Dashboard tables={tables} showProfit={showProfit} canBackup={session.roles.includes('Super Admin')} notices={notices.map((item) => ({ ...item, href: noticeHref(item) }))} onMarkRead={markOneNotice} onMarkAllRead={markEveryNotice} />} />
           <Route path="/products" element={<Guard session={session} path="/products"><Products tables={tables} token={session.token} canManage={session.roles.includes('Super Admin') || session.permissions.includes('products.manage')} canAdjust={session.roles.includes('Super Admin') || session.permissions.includes('stock.adjust')} canSeeCost={session.roles.includes('Super Admin') || session.permissions.includes('products.view_cost')} onSaved={refresh} /></Guard>} />
           <Route path="/sales" element={<Guard session={session} path="/sales"><SalesScreen tables={tables} prefix={session.invoicePrefix} userId={session.userId} userName={session.userName} isSuperAdmin={session.roles.includes('Super Admin')} canManageSales={session.permissions.includes('sales.manage')} canEditOwn={session.permissions.includes('sales.edit_own')} onSaved={refresh} /></Guard>} />
-          <Route path="/customers" element={<Guard session={session} path="/customers"><SimpleEntry title="Customers" table="customers" fields={['shop_name', 'phone', 'nif', 'city', 'email', 'address', 'credit_limit']} onSaved={refresh} rows={tables.customers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} canMerge={session.roles.includes('Super Admin')} sales={tables.sales} lines={tables.sale_lines} allocations={tables.payment_allocations} payments={tables.customer_payments} /></Guard>} />
+          <Route path="/customers" element={<Guard session={session} path="/customers"><SimpleEntry title="Customers" table="customers" fields={['shop_name', 'contact', 'phone', 'whatsapp', 'nif', 'city', 'postcode', 'email', 'address', 'shop_type', 'tags', 'payment_terms', 'credit_limit', 'notes']} onSaved={refresh} rows={tables.customers} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} canMerge={session.roles.includes('Super Admin')} sales={tables.sales} lines={tables.sale_lines} allocations={tables.payment_allocations} payments={tables.customer_payments} /></Guard>} />
           <Route path="/customers/:id" element={<Guard session={session} path="/customers"><Customer360 tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} isSuperAdmin={session.roles.includes('Super Admin')} onSaved={refresh} /></Guard>} />
           <Route path="/pipeline" element={<Guard session={session} path="/pipeline"><Pipeline tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} onSaved={refresh} /></Guard>} />
           <Route path="/follow-ups" element={<Guard session={session} path="/follow-ups"><FollowUps tables={tables} canManage={session.roles.includes('Super Admin') || session.permissions.includes('customers.manage')} onSaved={refresh} /></Guard>} />
@@ -591,7 +606,7 @@ export default function App() {
           ))}
         </div>
       )}
-      <ProfileDialog session={session} open={profileOpen} onClose={() => setProfileOpen(false)} onSaved={saveSession} />
+      <ProfileDialog session={session} open={profileOpen} muted={mutedLocal} onClose={() => setProfileOpen(false)} onSaved={saveSession} onMute={setMutedLocal} />
       <UndoToast />
     </div>
   )
@@ -604,7 +619,7 @@ function AccountAvatar({ session }: { session: Session }) {
   return <span className="avatar">{session.userName.slice(0, 1)}</span>
 }
 
-function ProfileDialog({ session, open, onClose, onSaved }: { session: Session; open: boolean; onClose: () => void; onSaved: (next: Session) => void }) {
+function ProfileDialog({ session, open, muted, onClose, onSaved, onMute }: { session: Session; open: boolean; muted: string[]; onClose: () => void; onSaved: (next: Session) => void; onMute: (kinds: string[]) => void }) {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -612,6 +627,11 @@ function ProfileDialog({ session, open, onClose, onSaved }: { session: Session; 
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const password = String(form.get('password') ?? '')
+    const nextMuted = ['low_stock', 'follow_up', 'large_payment'].filter((kind) => form.get(`mute_${kind}`) === 'on')
+    localStorage.setItem(`hak.notice.mute.${session.userId}`, JSON.stringify(nextMuted))
+    onMute(nextMuted)
+    document.documentElement.dataset.density = form.get('compact') === 'on' ? 'compact' : ''
+    localStorage.setItem('hak.density', form.get('compact') === 'on' ? 'compact' : '')
     setSaving(true)
     setError('')
     try {
@@ -673,6 +693,10 @@ function ProfileDialog({ session, open, onClose, onSaved }: { session: Session; 
           <input type="checkbox" name="notify_overdue" defaultChecked={session.notifyOverdue !== false} />
           Show overdue invoices
         </label>
+        <label className="check"><input type="checkbox" name="mute_low_stock" defaultChecked={muted.includes('low_stock')} /> Hide low-stock alerts</label>
+        <label className="check"><input type="checkbox" name="mute_follow_up" defaultChecked={muted.includes('follow_up')} /> Hide follow-up alerts</label>
+        <label className="check"><input type="checkbox" name="mute_large_payment" defaultChecked={muted.includes('large_payment')} /> Hide large-payment alerts</label>
+        <label className="check"><input type="checkbox" name="compact" defaultChecked={localStorage.getItem('hak.density') === 'compact'} /> Compact tables</label>
         {error && <p className="error">{error}</p>}
         <button className="btn" type="submit" disabled={saving}>Save profile</button>
       </form>
@@ -926,8 +950,10 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
         </div>
         <label className="control-line period-pick">Period
           <select aria-label="Period" className="control" value={period} onChange={(event) => setPeriod(event.target.value as DashboardPeriod)}>
+            <option value="today">Today</option>
             <option value="week">This week</option>
             <option value="month">This month</option>
+            <option value="last">Last month</option>
             <option value="quarter">This quarter</option>
             <option value="year">This year</option>
             <option value="twelve">Last 12 months</option>
@@ -975,7 +1001,7 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
       </div>
       <h2 className="section-label">Right now</h2>
       <div className="metrics">
-        <Card label="Customers owe" to="/customers" value={centsToEuros(view.customersOweCents)} tone={view.customersOweCents > 0 ? 'danger' : 'ok'} />
+        <Card label="Customers owe" to="/customers?owes=1" value={centsToEuros(view.customersOweCents)} tone={view.customersOweCents > 0 ? 'danger' : 'ok'} />
         <Card label="We owe suppliers" to="/suppliers" value={centsToEuros(view.suppliersOweCents)} tone={view.suppliersOweCents > 0 ? 'danger' : 'ok'} />
         <Card label="Stock value" to="/products" value={centsToEuros(view.stockValueCents)} tone="brand" />
         {showProfit && <Card label="Total investment" value={centsToEuros(view.investmentCents)} tone="brand" />}
@@ -1013,9 +1039,94 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
           <ul className="stock-list">{view.stock.filter((item) => item.status === 'LOW' || item.status === 'OUT').map((item) => {
             const product = tables.products.find((row) => String(row.code) === item.code)
             const label = `${item.code}: ${item.qty} pcs ${item.status}`
-            return <li key={item.code} data-status={item.status}>{product ? <Link to={`/products?product=${product.id}`}>{label}</Link> : label}</li>
+            const since = addDays(lisbonToday(), -30)
+            const sold = tables.sale_lines.filter((line) => line.product_id === product?.id && String(tables.sales.find((sale) => sale.id === line.sale_id)?.date ?? '') >= since).reduce((sum, line) => sum + Number(line.qty), 0)
+            const ordered = tables.purchase_lines.filter((line) => line.product_id === product?.id).reduce((sum, line) => sum + onOrderQty(Number(line.qty), line.qty_received == null || line.qty_received === '' ? Number(line.qty) : Number(line.qty_received)), 0)
+            const suggest = product ? reorderSuggestion(sold, item.qty, ordered) : 0
+            return <li key={item.code} data-status={item.status}>{product ? <Link to={`/products?product=${product.id}`}>{label}</Link> : label}{suggest > 0 && product ? <> · <Link to={`/purchases?new=1&product=${product.id}`}>Reorder {suggest}</Link></> : null}</li>
           })}</ul>
           <Link to="/products">All products</Link>
+        </div>
+      </div>
+      <div className="split">
+        <div className="panel">
+          <h2>Next 7 days</h2>
+          <ul className="record-list">
+            {tables.follow_ups.filter((row) => !row.done_at && dueWithin(String(row.due_at ?? ''), lisbonToday(), 7)).map((row) => (
+              <li key={String(row.id)}><Link to="/follow-ups">{String(row.title)} · {String(row.due_at).slice(0, 10)}</Link></li>
+            ))}
+            {invoiceStandings({
+              sales: tables.sales.map((sale) => ({ id: String(sale.id), invoice_no: String(sale.invoice_no ?? ''), customer_id: String(sale.customer_id), date: sale.date == null ? null : String(sale.date) })),
+              lines: tables.sale_lines.map((line) => ({ sale_id: String(line.sale_id), qty: Number(line.qty), unit_price: Number(line.unit_price), discount: Number(line.discount ?? 0) })),
+              allocations: tables.payment_allocations.map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
+              today: lisbonToday(),
+              overdueDays: settingNumber(tables.settings, 'overdue_days', 30),
+            }).filter((invoice) => invoice.status !== 'Paid' && dueWithin(dueOn(invoice.date, settingNumber(tables.settings, 'overdue_days', 30)), lisbonToday(), 7)).map((invoice) => (
+              <li key={invoice.id}><Link to={`/sales?invoice=${invoice.id}`}>{invoice.invoiceNo} due {dueOn(invoice.date, settingNumber(tables.settings, 'overdue_days', 30))}</Link></li>
+            ))}
+          </ul>
+        </div>
+        <div className="panel">
+          <h2>Recent invoices</h2>
+          <ul className="record-list">
+            {[...tables.sales].sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? ''))).slice(0, 10).map((sale) => {
+              const standing = invoiceStandings({
+                sales: [{ id: String(sale.id), invoice_no: String(sale.invoice_no ?? ''), customer_id: String(sale.customer_id), date: sale.date == null ? null : String(sale.date) }],
+                lines: tables.sale_lines.filter((line) => line.sale_id === sale.id).map((line) => ({ sale_id: String(line.sale_id), qty: Number(line.qty), unit_price: Number(line.unit_price), discount: Number(line.discount ?? 0) })),
+                allocations: tables.payment_allocations.filter((row) => row.sale_id === sale.id).map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
+                today: lisbonToday(),
+              })[0]
+              return <li key={String(sale.id)}><Link to={`/sales?invoice=${sale.id}`}>{String(sale.invoice_no)}</Link> <span data-status={standing?.status}>{standing?.status}</span></li>
+            })}
+          </ul>
+        </div>
+      </div>
+      {showProfit && (
+        <div className="panel">
+          <h2>Settle up</h2>
+          {settleTransfers(view.partners).length === 0 && <p className="quiet">Partners are settled.</p>}
+          <ul className="record-list">
+            {settleTransfers(view.partners).map((move) => (
+              <li key={`${move.fromId}-${move.toId}`}>
+                <span>{move.fromName} pays {move.toName} {centsToEuros(move.amountCents)}</span>
+                <Link className="btn-ghost" to={`/transfers?new=1&from=${move.fromId}&to=${move.toId}&amount=${move.amountCents}`}>Record</Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="split">
+        <div className="panel">
+          <h2>Sales by category</h2>
+          <ul className="record-list">
+            {(() => {
+              const totals = new Map<string, number>()
+              for (const line of tables.sale_lines) {
+                const sale = tables.sales.find((row) => row.id === line.sale_id)
+                const date = String(sale?.date ?? '')
+                if (date < view.range.start || date > view.range.end) continue
+                const product = tables.products.find((row) => row.id === line.product_id)
+                const name = String(product?.category || 'Uncategorised')
+                totals.set(name, (totals.get(name) ?? 0) + Number(line.qty) * Number(line.unit_price) - Number(line.discount ?? 0))
+              }
+              return [...totals.entries()].map(([name, cents]) => <li key={name}>{name} · {centsToEuros(cents)}</li>)
+            })()}
+          </ul>
+        </div>
+        <div className="panel">
+          <h2>Top debtors</h2>
+          <ul className="record-list">
+            {tables.customers.map((shop) => ({ shop, owed: customerStatement(tables, String(shop.id), lisbonToday()).balanceCents }))
+              .filter((row) => row.owed > 0)
+              .sort((a, b) => b.owed - a.owed)
+              .slice(0, 5)
+              .map((row) => (
+                <li key={String(row.shop.id)}>
+                  <Link to={`/customers/${row.shop.id}`}>{String(row.shop.shop_name)}</Link> · {centsToEuros(row.owed)}
+                  {(row.shop.whatsapp || row.shop.phone) && <a className="btn-ghost" href={`${whatsAppLink(String(row.shop.whatsapp || row.shop.phone))}?text=${encodeURIComponent(`${row.shop.shop_name} statement. Balance due ${centsToEuros(row.owed)}.`)}`} target="_blank" rel="noreferrer">Remind</a>}
+                </li>
+              ))}
+          </ul>
         </div>
       </div>
       <div className="panel chart">
@@ -1103,6 +1214,8 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
   const [status, setStatus] = useState('')
   const [photo, setPhoto] = useState<string | null>(null)
   const [productOpen, setProductOpen] = useState(false)
+  const [countOpen, setCountOpen] = useState(false)
+  const [counts, setCounts] = useState<Record<string, string>>({})
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [editingId, setEditingId] = useState('')
   const [previewId, setPreviewId] = useState('')
@@ -1149,6 +1262,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
           {!canManage && <p className="lede">You can look products up. Adding or pricing them is limited to managers.</p>}
         </div>
         <div className="quick-actions">
+          {canAdjust && <button type="button" className="btn-ghost" onClick={() => { setCounts(Object.fromEntries(tables.products.map((row) => [String(row.id), String(summary.stock.find((item) => item.code === row.code)?.qty ?? 0)]))); setCountOpen(true) }}>Stock count</button>}
           {canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setPhoto(null); setFormError(''); form.reset(blankProduct); setProductOpen(true) }}>New product</button>}
           {canAdjust && <button type="button" className="btn-ghost" onClick={() => { setAdjustId(''); setAdjustNote(''); setAdjustOpen(true) }}>Adjust stock</button>}
         </div>
@@ -1178,6 +1292,13 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
           const qty = stock?.qty ?? 0
           const average = qty !== 0 ? Math.round((stock?.valueCents ?? 0) / qty) : 0
           const status = stock?.status ?? 'OUT'
+          const ordered = onOrderQty(
+            tables.purchase_lines.filter((line) => line.product_id === row.id).reduce((sum, line) => sum + Number(line.qty), 0),
+            tables.purchase_lines.filter((line) => line.product_id === row.id).reduce((sum, line) => sum + (line.qty_received == null || line.qty_received === '' ? Number(line.qty) : Number(line.qty_received)), 0),
+          )
+          const since = addDays(lisbonToday(), -30)
+          const sold = tables.sale_lines.filter((line) => line.product_id === row.id && String(tables.sales.find((sale) => sale.id === line.sale_id)?.date ?? '') >= since).reduce((sum, line) => sum + Number(line.qty), 0)
+          const suggest = reorderSuggestion(sold, qty, ordered)
           return {
             key: String(row.id),
             status,
@@ -1188,6 +1309,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
                   <span className="product-meta">
                     <span>{String(row.code)} {String(row.name)}</span>
                     {row.category ? <small>{String(row.category)}</small> : null}
+                    {suggest > 0 ? <Link to={`/purchases?new=1&product=${row.id}`}>Reorder {suggest}</Link> : null}
                   </span>
                 </span>
                 <RowActions
@@ -1215,15 +1337,37 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
                 />
               </span>,
               status,
-              `${qty} pcs`,
+              ordered > 0 ? `${qty} pcs · ${ordered} on order` : `${qty} pcs`,
               <span className="price-stack" key="price">
                 {Number(row.sell_price) > 0 ? <span>{centsToEuros(Number(row.sell_price))}</span> : <span className="owe">No selling price</span>}
                 {canSeeCost && qty !== 0 ? <span className="quiet">Average cost {centsToEuros(average)}</span> : null}
+                {canSeeCost && Number(row.sell_price) > 0 ? <span className="quiet">Margin {Math.round(((Number(row.sell_price) - average) / Number(row.sell_price)) * 1000) / 10}%</span> : null}
               </span>,
             ],
           }
         })}
       />
+      <Popup title="Stock count" open={countOpen} onClose={() => setCountOpen(false)}>
+          <form className="form-grid" onSubmit={async (event) => {
+            event.preventDefault()
+            for (const row of tables.products) {
+              const counted = Number(counts[String(row.id)])
+              const current = summary.stock.find((item) => item.code === row.code)?.qty ?? 0
+              if (!Number.isFinite(counted) || counted === current) continue
+              await saveLocal('stock_adjustments', { id: uuidv7(), product_id: row.id, qty: counted - current, reason: 'count correction', deleted_at: null })
+            }
+            setCountOpen(false)
+            await onSaved()
+          }}>
+            <p className="lede">Type the quantity you counted. The difference is saved as a count correction.</p>
+            {tables.products.map((row) => (
+              <label key={String(row.id)} className="control-line">{String(row.code)} {String(row.name)}
+                <input aria-label={`Count ${String(row.code)}`} className="control" inputMode="numeric" value={counts[String(row.id)] ?? ''} onChange={(event) => setCounts((current) => ({ ...current, [String(row.id)]: event.target.value }))} />
+              </label>
+            ))}
+            <button className="btn">Save count</button>
+          </form>
+        </Popup>
       {canManage && (
         <Popup title={editingId ? 'Edit product' : 'New product'} open={productOpen} onClose={() => setProductOpen(false)}>
         <form className="form-grid two" onSubmit={form.handleSubmit(async (values) => {
@@ -1412,7 +1556,7 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
     setOpen(true)
     setParams({}, { replace: true })
   }, [params, setParams, table])
-  const labels = { shop_name: 'Shop name', phone: 'Phone', nif: 'NIF', city: 'City', email: 'Email', address: table === 'suppliers' ? 'Shop address' : 'Address', home_address: 'Home address', credit_limit: 'Credit limit (EUR)', name: 'Name', country: 'Country', first_name: 'First name', last_name: 'Last name', whatsapp: 'WhatsApp' } as Record<string, string>
+  const labels = { shop_name: 'Shop name', contact: 'Contact person', phone: 'Phone', nif: 'NIF', city: 'City', postcode: 'Postcode', email: 'Email', address: table === 'suppliers' ? 'Shop address' : 'Address', home_address: 'Home address', shop_type: 'Shop type', tags: 'Tags', payment_terms: 'Payment terms (days)', credit_limit: 'Credit limit (EUR)', notes: 'Notes', name: 'Name', country: 'Country', first_name: 'First name', last_name: 'Last name', whatsapp: 'WhatsApp' } as Record<string, string>
   const hints = (table === 'customers' ? {
     shop_name: 'The name on the shop front. This is how the shop appears on invoices.',
     phone: 'Portuguese mobile or landline, so you can call or WhatsApp the shop.',
@@ -1421,6 +1565,13 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
     email: 'Where invoices and statements are sent. Optional.',
     address: 'Street and door number of the shop.',
     credit_limit: 'The most this shop can owe, in euros. Leave empty for no limit.',
+    contact: 'The person you speak to at the shop.',
+    whatsapp: 'Optional. Leave empty to use the phone number.',
+    postcode: 'Portuguese postcode, for example 1100-053.',
+    shop_type: 'Retail, wholesale, or another type you use.',
+    tags: 'Short labels separated by commas, for example Lisbon, Key account.',
+    payment_terms: 'How many days after the invoice the shop usually pays.',
+    notes: 'Anything the next person should know about this shop.',
   } : {
     name: 'The company name. This is how the supplier appears on purchases.',
     first_name: 'The person you speak to. Optional.',
@@ -1442,6 +1593,12 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
     address: 'Rua Augusta 12',
     home_address: 'Rua do Ouro 5',
     credit_limit: '500,00',
+    contact: 'Ana Silva',
+    postcode: '1100-053',
+    shop_type: 'Retail',
+    tags: 'Lisbon',
+    payment_terms: '30',
+    notes: 'Prefers morning calls',
     name: 'Lisbon Parts',
     first_name: 'Ana',
     last_name: 'Silva',
@@ -1478,6 +1635,10 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
             row[field] = cents
             continue
           }
+          if (field === 'payment_terms') {
+            row[field] = value === '' ? null : Number(value)
+            continue
+          }
           row[field] = value === '' && field !== 'shop_name' && field !== 'name' ? null : value
         }
         if ((table === 'customers' || table === 'suppliers') && typeof row.nif === 'string' && row.nif !== '' && !isValidPortugueseNif(row.nif)) {
@@ -1502,13 +1663,13 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
       }}>
         {fields.map((field) => {
           const label = labels[field] ?? field
-          const long = field === 'address' || field === 'home_address'
+          const long = field === 'address' || field === 'home_address' || field === 'notes'
           return (
             <Field key={field} label={label} hint={hints[field]} wide={long}>
               {long ? (
                 <textarea name={field} aria-label={label} placeholder={placeholders[field] ?? label} className="control" rows={2} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
               ) : (
-                <input name={field} aria-label={label} placeholder={placeholders[field] ?? label} required={field === 'shop_name' || field === 'name'} className="control" type={field === 'email' ? 'email' : field === 'phone' || field === 'whatsapp' ? 'tel' : 'text'} inputMode={field === 'nif' ? 'numeric' : field === 'credit_limit' ? 'decimal' : undefined} maxLength={field === 'nif' ? 9 : undefined} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
+                <input name={field} aria-label={label} placeholder={placeholders[field] ?? label} required={field === 'shop_name' || field === 'name'} className="control" type={field === 'email' ? 'email' : field === 'phone' || field === 'whatsapp' ? 'tel' : 'text'} inputMode={field === 'nif' || field === 'payment_terms' ? 'numeric' : field === 'credit_limit' ? 'decimal' : undefined} maxLength={field === 'nif' ? 9 : undefined} value={draft[field] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
               )}
             </Field>
           )
@@ -1556,10 +1717,11 @@ function SimpleEntry({ title, table, fields, rows, onSaved, canManage = true, is
       }} onChanged={onSaved} />
       {error && !open && <p className="error">{error}</p>}
       {rows.length === 0 && <p className="quiet">No {title.toLowerCase()} yet.</p>}
+      {table === 'customers' && params.get('owes') === '1' && <p className="quiet">Showing shops with a balance.</p>}
       <RecordTable
         caption={title}
         headers={table === 'customers' ? ['Shop', 'Phone', 'City', 'Owed', 'Last order', ''] : ['Name', 'Contact', 'Phone', 'Country', 'Balance', '']}
-        rows={rows.map((row) => {
+        rows={(table === 'customers' && params.get('owes') === '1' ? rows.filter((row) => owed(String(row.id)) > 0) : rows).map((row) => {
           const actions = <RowActions canWrite={canManage} onPreview={() => setPreviewId(String(row.id))} onEdit={() => {
             setEditingId(String(row.id))
             setDraft(Object.fromEntries(fields.map((field) => [field, fieldValue(row, field)])))
@@ -1737,6 +1899,15 @@ function PaymentEntry({ tables, canManage = true, canManagePurchases = true, onS
         {kind === 'supplier' && <Field label="Supplier"><select name="supplier_id" aria-label="Supplier" className="control" value={selectedSupplier} onChange={(event) => chooseSupplier(event.target.value)}>{tables.suppliers.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>}
         {kind === 'supplier' && <p className="lede">{supplierName} · We owe {centsToEuros(supplierBalance.owedCents)}</p>}
         <Field label="Recorded by"><select name="paid_by" aria-label="Recorded by" className="control">{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
+        {kind === 'customer' && paymentCredit({
+          customerId: selectedCustomer,
+          payments: tables.customer_payments.map((row) => ({ id: String(row.id), customer_id: String(row.customer_id), amount: Number(row.amount), created_at: row.created_at == null ? null : String(row.created_at) })),
+          allocations: tables.payment_allocations.map((row) => ({ customer_payment_id: String(row.customer_payment_id), amount: Number(row.amount) })),
+        }).reduce((sum, row) => sum + row.leftoverCents, 0) > 0 && <p className="quiet">Shop credit {centsToEuros(paymentCredit({
+          customerId: selectedCustomer,
+          payments: tables.customer_payments.map((row) => ({ id: String(row.id), customer_id: String(row.customer_id), amount: Number(row.amount), created_at: row.created_at == null ? null : String(row.created_at) })),
+          allocations: tables.payment_allocations.map((row) => ({ customer_payment_id: String(row.customer_payment_id), amount: Number(row.amount) })),
+        }).reduce((sum, row) => sum + row.leftoverCents, 0))} is kept for the next invoice.</p>}
         <Field label="Amount (EUR)"><input name="amount" required placeholder="Amount" aria-label="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
         <Field label="Currency"><input name="currency" placeholder="Currency" aria-label="Currency" defaultValue="EUR" className="control" /></Field>
         <Field label="FX rate"><input name="fx_rate" placeholder="FX rate" aria-label="FX rate" defaultValue="1" className="control" /></Field>
@@ -1867,6 +2038,7 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
   const [amountValue, setAmountValue] = useState('')
   const [paidBy, setPaidBy] = useState('')
   const [reason, setReason] = useState('')
+  const [repeatMonthly, setRepeatMonthly] = useState(false)
   const [warning, setWarning] = useState('')
   const [receipt, setReceipt] = useState<string | null>(null)
   const [expenseParams, setExpenseParams] = useSearchParams()
@@ -1888,6 +2060,18 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
         <div><h1>Expenses</h1><p className="lede">Shop costs come off the profit. They are not stock.</p></div>
         {canManage && <button type="button" className="btn" onClick={() => { setEditingId(''); setCategory(''); setAmountValue(''); setPaidBy(''); setReason(''); setReceipt(null); setOpen(true) }}>New expense</button>}
       </div>
+      {recurringDue(settingJson<RecurringCost[]>(tables.settings, 'recurring_expenses', []), lisbonToday().slice(0, 7)).map((row) => (
+        <p key={row.id} className="panel">
+          {row.category} {centsToEuros(row.amountCents)} is due this month.
+          <button type="button" className="btn-ghost" onClick={async () => {
+            await saveLocal('expenses', { id: uuidv7(), category: row.category, amount: row.amountCents, amount_eur: row.amountCents, currency: 'EUR', fx_rate: '1', paid_by: row.paidBy, deleted_at: null })
+            const templates = settingJson<RecurringCost[]>(tables.settings, 'recurring_expenses', []).map((item) => item.id === row.id ? { ...item, confirmedMonth: lisbonToday().slice(0, 7) } : item)
+            const existingSetting = tables.settings.find((item) => item.key === 'recurring_expenses')
+            await saveLocal('settings', { id: existingSetting?.id ?? uuidv7(), key: 'recurring_expenses', value: JSON.stringify(templates), deleted_at: null })
+            await onSaved()
+          }}>Confirm</button>
+        </p>
+      ))}
       <RecordTable
         caption="Expenses"
         headers={['Expense', 'Paid by', 'Amount']}
@@ -1922,6 +2106,13 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
           if (amount == null) { setWarning('Enter the amount in euros, for example 6,50.'); return }
           try {
           await saveLocal('expenses', { ...(existing ?? {}), id: editingId || uuidv7(), category: form.get('category'), amount, amount_eur: amount, currency: 'EUR', fx_rate: '1', paid_by: form.get('paid_by'), receipt_path: receipt, deleted_at: null })
+          if (repeatMonthly) {
+            const templates = settingJson<RecurringCost[]>(tables.settings, 'recurring_expenses', [])
+            const id = editingId || String(form.get('category'))
+            const next = [...templates.filter((row) => row.id !== id), { id, category: String(form.get('category')), amountCents: amount, paidBy: String(form.get('paid_by') ?? ''), confirmedMonth: lisbonToday().slice(0, 7) }]
+            const existingSetting = tables.settings.find((row) => row.key === 'recurring_expenses')
+            await saveLocal('settings', { id: existingSetting?.id ?? uuidv7(), key: 'recurring_expenses', value: JSON.stringify(next), deleted_at: null })
+          }
           } catch (caught) {
             setWarning(caught instanceof Error ? caught.message : 'Could not save this expense.')
             return
@@ -1934,6 +2125,7 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
           <datalist id="expense-categories">{expenseCategories.map((item) => <option key={item} value={item} />)}</datalist>
           <Field label="Amount (EUR)"><input name="amount" required placeholder="Amount" className="control" value={amountValue} onChange={(event) => setAmountValue(event.target.value)} /></Field>
           <Field label="Paid by"><select name="paid_by" aria-label="Paid by" className="control" value={paidBy || String(tables.partners[0]?.id ?? '')} onChange={(event) => setPaidBy(event.target.value)}>{tables.partners.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name)}</option>)}</select></Field>
+          {!editingId && <label className="check"><input type="checkbox" checked={repeatMonthly} onChange={(event) => setRepeatMonthly(event.target.checked)} /> Repeat monthly</label>}
           <label className="control-line">Receipt
             <input aria-label="Receipt" type="file" accept="image/*" className="control" onChange={(event) => {
               const file = event.target.files?.[0]
@@ -1986,6 +2178,18 @@ function TransferEntry({ tables, canManage = true, onSaved }: { tables: LocalTab
   const [fromId, setFromId] = useState('')
   const [toId, setToId] = useState('')
   const [amountValue, setAmountValue] = useState('')
+  const [transferParams, setTransferParams] = useSearchParams()
+  useEffect(() => {
+    if (transferParams.get('new') !== '1') return
+    setEditingId('')
+    setFromId(transferParams.get('from') ?? '')
+    setToId(transferParams.get('to') ?? '')
+    const amount = Number(transferParams.get('amount') ?? '')
+    setAmountValue(Number.isFinite(amount) && amount > 0 ? centsToInput(amount) : '')
+    setReason('')
+    setOpen(true)
+    setTransferParams({}, { replace: true })
+  }, [transferParams, setTransferParams])
   const [reason, setReason] = useState('')
   const [warning, setWarning] = useState('')
   const nameOf = (id: unknown) => String(tables.partners.find((row) => row.id === id)?.name ?? 'Partner')
