@@ -495,7 +495,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            <p className={`status ${statusTone(status)}`}><i />{status}{notice ? ` · ${notice}` : ''}</p>
+            <p className={`status ${statusTone(status)}`} title={`${status}${notice ? ` · ${notice}` : ''}`}><i />{status}{notice ? ` · ${notice}` : ''}</p>
             <div className="account">
               <button type="button" className="icon-btn" aria-label="Notifications" aria-expanded={noticesOpen} onClick={() => { setAccountOpen(false); setNoticesOpen((open) => !open) }}>
                 <Bell size={18} />
@@ -1015,6 +1015,7 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
             <h2>Partners</h2>
             <p className="quiet">{view.whoOwesWhom}</p>
             {view.sharesMessage && <p className="warn">{view.sharesMessage}</p>}
+            <div className="table-scroll">
             <table className="record-table">
               <caption className="sr-only">Partner shares</caption>
               <thead>
@@ -1033,6 +1034,7 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
         <div className="panel">

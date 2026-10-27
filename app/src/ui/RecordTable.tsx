@@ -7,6 +7,7 @@ export function RecordTable({ caption, headers, rows, statusColumn = 1 }: {
   rows: { key: string; cells: ReactNode[]; status?: string }[]
 }) {
   return (
+    <div className="table-scroll">
     <table className="record-table">
       <caption className="sr-only">{caption}</caption>
       <thead>
@@ -24,5 +25,6 @@ export function RecordTable({ caption, headers, rows, statusColumn = 1 }: {
         ))}
       </tbody>
     </table>
+    </div>
   )
 }

@@ -401,6 +401,7 @@ textarea.control { height: auto; padding: 10px 14px; }
 .report-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
 .report-table th, .report-table td { padding: 10px 8px; border-bottom: 1px solid #eaecf0; text-align: left; }
 .report-table .num, .record-table .num { text-align: right; }
+.table-scroll { width: 100%; max-width: 100%; min-width: 0; }
 .record-table { width: 100%; border-collapse: collapse; background: white; border: 1px solid var(--line); border-radius: 12px; }
 .record-table th, .record-table td { padding: 10px 12px; border-top: 1px solid var(--line); text-align: left; vertical-align: middle; font-variant-numeric: tabular-nums; }
 .record-table th { background: #eef2ff; color: #3538cd; font-size: 13px; font-weight: 600; border-top: 0; }
@@ -748,11 +749,33 @@ textarea.control { height: auto; padding: 10px 14px; }
   .workspace, .content, .page, .panel { min-width: 0; max-width: 100%; }
   .workspace { height: auto; overflow: visible; }
   .sidebar { display: none; }
-  .page-head, .quick-actions { flex-direction: column; align-items: stretch; }
-  .metrics { grid-template-columns: 1fr; }
+  .page-head { flex-direction: column; align-items: stretch; }
   .money, .quiet, .lede { overflow-wrap: anywhere; }
-  .search { width: 100%; }
-  .content { padding-bottom: 88px; overflow: visible; }
+  .topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "search search search search"
+      "status status status status"
+      "new . bell account";
+    align-items: center;
+    height: auto;
+    gap: 8px 10px;
+    padding: 10px 12px 12px;
+  }
+  .topbar .search { grid-area: search; width: 100%; min-width: 0; }
+  .top-actions { display: contents; }
+  .top-actions > .account:nth-child(1) { grid-area: new; }
+  .top-actions > .status { grid-area: status; min-width: 0; white-space: normal; }
+  .top-actions > .account:nth-child(3) { grid-area: bell; justify-self: end; }
+  .top-actions > .account:nth-child(4) { grid-area: account; justify-self: end; }
+  .content { padding: 16px 16px calc(88px + env(safe-area-inset-bottom)); overflow: visible; }
+  .bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
+  .table-scroll { overflow-x: auto; }
+  .filters .control { min-width: min(180px, 100%); }
+  .insight-page .page-head h1 { font-size: 26px; }
+  .user-menu, .notice-menu { position: fixed; top: 164px; right: 12px; left: auto; width: min(320px, calc(100vw - 24px)); }
+  .new-menu { position: fixed; top: 164px; left: 12px; right: auto; }
   .user-chip { font-size: 0; }
   .user-chip .avatar, .user-chip svg { font-size: 14px; }
   .bottom-nav {
@@ -795,6 +818,9 @@ textarea.control { height: auto; padding: 10px 14px; }
   .undo-toast { right: 12px; bottom: 72px; left: 12px; }
   .board { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; }
   .column { flex: 0 0 100%; scroll-snap-align: start; }
+}
+@media (min-width: 700px) and (max-width: 980px) {
+  .column { flex-basis: calc(50% - 6px); }
 }
 
 .settings-note { margin: 8px 0 0; color: #027a48; font-weight: 650; }
@@ -892,4 +918,42 @@ textarea.control { height: auto; padding: 10px 14px; }
 @media (max-width: 900px) {
   .settings-grid, .settings-split, .settings-pair { grid-template-columns: 1fr; }
   .footer-bar, .caution-list li { flex-direction: column; align-items: stretch; }
+}
+@media (max-width: 720px) {
+  .line-grid { grid-template-columns: 1fr 1fr; }
+  .line-grid > :first-child,
+  .line-grid > .btn-ghost { grid-column: 1 / -1; }
+  .invoice-parties, .invoice-head, .invoice-foot { flex-direction: column; align-items: flex-start; }
+  .invoice-meta { text-align: left; }
+  .invoice-lockup { min-width: 0; }
+  .invoice-brand { overflow-wrap: anywhere; }
+  .popup-backdrop { padding: 12px; }
+  .popup { padding: 16px; max-height: calc(100vh - 24px); border-radius: 16px; }
+  .panel, .metric, .metric.accent { padding: 16px; }
+  .choice-add { flex-wrap: wrap; }
+  .choice-add .control { min-width: 0; flex: 1 1 140px; }
+}
+@media (max-width: 800px) {
+  .calendar-grid { gap: 4px; }
+  .weekday { letter-spacing: 0; font-size: 10px; }
+  .day-cell, .day-pad { position: relative; min-height: 48px; align-items: center; padding: 4px 2px; border-radius: 10px; }
+  .day-num { width: 28px; height: 28px; font-size: 13px; }
+  .day-chip, .day-more {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .day-cell:has(.day-chip)::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 99px;
+    background: #465fff;
+  }
 }

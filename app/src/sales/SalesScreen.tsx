@@ -449,6 +449,7 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
                     <p className="invoice-party">{sellerName || '—'}</p>
                   </div>
                 </div>
+                <div className="table-scroll">
                 <table className="invoice-lines">
                   <thead>
                     <tr><th>Product</th><th>Qty</th><th>Price</th><th>Amount</th></tr>
@@ -464,6 +465,7 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
                     ))}
                   </tbody>
                 </table>
+                </div>
                 <dl className="invoice-totals">
                   <div><dt>Total</dt><dd>{centsToEuros(model.totalCents)}</dd></div>
                   <div><dt>Paid</dt><dd>{centsToEuros(standing?.paidCents ?? 0)}</dd></div>

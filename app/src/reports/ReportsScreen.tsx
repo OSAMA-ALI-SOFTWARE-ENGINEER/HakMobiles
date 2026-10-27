@@ -30,6 +30,7 @@ function mailHref(shop: string, email: string, text: string): string {
 
 function Groups({ groups, showProfit }: { groups: SalesGroup[]; showProfit: boolean }) {
   return (
+    <div className="table-scroll">
     <table className="report-table">
       <thead>
         <tr>
@@ -50,6 +51,7 @@ function Groups({ groups, showProfit }: { groups: SalesGroup[]; showProfit: bool
         ))}
       </tbody>
     </table>
+    </div>
   )
 }
 
@@ -161,6 +163,7 @@ export function ReportsScreen({ tables, showProfit }: { tables: LocalTables; sho
       {view === 'Ageing' && (
         <>
           <article className="metric"><span>Ageing total</span><strong className="money">{centsToEuros(reports.ageing.totalCents)}</strong></article>
+          <div className="table-scroll">
           <table className="report-table">
             <thead>
               <tr>
@@ -188,6 +191,7 @@ export function ReportsScreen({ tables, showProfit }: { tables: LocalTables; sho
               })}
             </tbody>
           </table>
+          </div>
         </>
       )}
     </section>
