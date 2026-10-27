@@ -1,3 +1,19 @@
+/** A settings sentence may be stored as plain text or as a JSON string. */
+export function settingText(raw: unknown): string {
+  if (raw == null) return ''
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw)
+  if (typeof raw !== 'string') return ''
+  if (raw.trim().startsWith('"')) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (typeof parsed === 'string') return parsed
+    } catch {
+      return raw
+    }
+  }
+  return raw
+}
+
 export function settingList(settings: Record<string, unknown>[], key: string, fallback: string[]): string[] {
   const raw = settings.find((row) => row.key === key)?.value
   if (Array.isArray(raw)) return raw.map(String).filter(Boolean)

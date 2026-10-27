@@ -27,6 +27,11 @@ describe('document brand', () => {
     expect(brand.statementFooter).toBe('Statement')
   })
 
+  it('reads a company name that came back from the JSON column', () => {
+    const brand = documentBrand([{ key: 'company_name', value: '"HAK Porto"' }])
+    expect(brand.name).toBe('HAK Porto')
+  })
+
   it('ignores a colour or logo that is not one of the allowed choices', () => {
     const brand = documentBrand([
       { key: 'document_design', value: JSON.stringify({ logo: 'https://example.test/logo.png', color: 'rainbow' }) },

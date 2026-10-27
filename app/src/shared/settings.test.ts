@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { settingList, settingNumber } from './settings'
+import { settingList, settingNumber, settingText } from './settings'
 
 describe('settings lists', () => {
   it('reads an array or a JSON string and falls back otherwise', () => {
@@ -8,5 +8,8 @@ describe('settings lists', () => {
     expect(settingList([], 'categories', ['Other'])).toEqual(['Other'])
     expect(settingNumber([{ key: 'overdue_days', value: '14' }], 'overdue_days', 30)).toBe(14)
     expect(settingNumber([], 'overdue_days', 30)).toBe(30)
+    expect(settingText('"HAK Wholesales"')).toBe('HAK Wholesales')
+    expect(settingText('HAK Wholesales')).toBe('HAK Wholesales')
+    expect(settingText('')).toBe('')
   })
 })

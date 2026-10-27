@@ -212,6 +212,11 @@ class SyncService
         $payload['created_at'] = $payload['created_at'] ?? now()->toDateTimeString();
 
         foreach ($payload as $key => $value) {
+            if ($table === 'settings' && $key === 'value') {
+                $payload[$key] = $this->jsonDocument($value);
+
+                continue;
+            }
             if (is_array($value)) {
                 $payload[$key] = json_encode($value);
             } elseif (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}T/', $value)) {
@@ -250,6 +255,28 @@ class SyncService
                 'device_id' => $deviceId,
             ]);
         }
+    }
+
+    /**
+     * settings.value is a JSON column. A company name or an empty box is quoted so MySQL accepts it.
+     * Text that is already JSON, such as a list or a document design, is stored unchanged.
+     */
+    private function jsonDocument(mixed $value): mixed
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (is_array($value) || is_bool($value) || is_int($value) || is_float($value)) {
+            return json_encode($value, JSON_UNESCAPED_UNICODE);
+        }
+        if (! is_string($value)) {
+            return json_encode((string) $value, JSON_UNESCAPED_UNICODE);
+        }
+        if ($value !== '' && json_validate($value)) {
+            return $value;
+        }
+
+        return json_encode($value, JSON_UNESCAPED_UNICODE);
     }
 
     /**

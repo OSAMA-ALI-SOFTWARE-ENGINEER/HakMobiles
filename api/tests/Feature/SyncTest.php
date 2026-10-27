@@ -278,6 +278,28 @@ it('stores a purged product and keeps it out of the live list', function () {
         ->and(Product::query()->where('id', $id)->exists())->toBeFalse();
 });
 
+it('stores a company name in the settings JSON column and pulls it back', function () {
+    $admin = syncUser('Super Admin');
+    $nameId = (string) Str::uuid7();
+    $emptyId = (string) Str::uuid7();
+    $listId = (string) Str::uuid7();
+
+    $this->actingAs($admin, 'sanctum')->postJson('/api/sync/push', ['ops' => [
+        syncOp('settings', $nameId, ['key' => 'company_name', 'value' => 'HAK Wholesales']),
+        syncOp('settings', $emptyId, ['key' => 'company_nif', 'value' => '""']),
+        syncOp('settings', $listId, ['key' => 'categories', 'value' => '["Cases","Cables"]']),
+    ]])->assertOk()->assertJsonCount(0, 'rejected');
+
+    expect(json_decode((string) \Illuminate\Support\Facades\DB::table('settings')->where('id', $nameId)->value('value'), true))->toBe('HAK Wholesales')
+        ->and(json_decode((string) \Illuminate\Support\Facades\DB::table('settings')->where('id', $emptyId)->value('value'), true))->toBe('')
+        ->and(json_decode((string) \Illuminate\Support\Facades\DB::table('settings')->where('id', $listId)->value('value'), true))->toBe(['Cases', 'Cables']);
+
+    $pull = $this->actingAs($admin, 'sanctum')->getJson('/api/sync/pull?since=0')->assertOk();
+    $pulled = collect($pull->json('changes'))->firstWhere('record_id', $nameId)['data']['value'];
+    $name = is_string($pulled) && str_starts_with($pulled, '"') ? json_decode($pulled, true) : $pulled;
+    expect($name)->toBe('HAK Wholesales');
+});
+
 it('stores a short path for a product photo', function () {
     \Illuminate\Support\Facades\Storage::fake('public');
     $admin = syncUser('Super Admin');

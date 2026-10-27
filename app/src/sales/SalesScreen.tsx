@@ -8,7 +8,7 @@ import { shopFigures, stageAfterOrders } from '../shared/crm'
 import { shopLabel } from '../shared/labels'
 import { centsToEuros, centsToInput, parseEuros } from '../shared/money'
 import { documentBrand } from '../shared/brand'
-import { settingJson } from '../shared/settings'
+import { settingJson, settingText } from '../shared/settings'
 import { isMonthLocked, priceForShop, type SpecialPrice } from '../shared/work'
 import { allocationsFromCredit, invoiceStandings, paymentCredit } from '../shared/payments'
 import {
@@ -164,7 +164,7 @@ export function SalesScreen({ tables, prefix, userId, userName, isSuperAdmin, ca
       shop: shopName(String(sale.customer_id)),
       lines,
       totalCents: lines.reduce((sum, line) => sum + line.totalCents, 0),
-      footer: String(tables.settings.find((row) => row.key === 'invoice_footer')?.value ?? ''),
+      footer: settingText(tables.settings.find((row) => row.key === 'invoice_footer')?.value),
       brand: documentBrand(tables.settings),
     }
   }

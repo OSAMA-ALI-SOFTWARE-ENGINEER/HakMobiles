@@ -15,6 +15,17 @@ it('sends zero when a required money column is empty', () => {
   expect(rowToServer('purchases', JSON.parse(purchasePayloadWithShipping('{"extra_cost":null,"id":"p"}') ?? '{}') as Record<string, unknown>).extra_cost).toBe('0.00')
 })
 
+it('quotes a settings sentence so the JSON column accepts it', () => {
+  expect(rowToServer('settings', { value: 'HAK Wholesales' }).value).toBe('"HAK Wholesales"')
+  expect(rowToServer('settings', { value: '' }).value).toBe('""')
+  expect(rowToServer('settings', { value: '["Cases"]' }).value).toBe('["Cases"]')
+  expect(rowToServer('settings', { value: 30 }).value).toBe('30')
+  expect(rowFromServer('settings', { value: '"HAK Wholesales"' }).value).toBe('HAK Wholesales')
+  expect(rowFromServer('settings', { value: '""' }).value).toBe('')
+  expect(rowFromServer('settings', { value: '["Cases"]' }).value).toBe('["Cases"]')
+  expect(rowFromServer('products', { name: 'HAK Wholesales' }).name).toBe('HAK Wholesales')
+})
+
 it('rewrites a stuck purchase so shipping is zero cents', () => {
   expect(purchasePayloadWithShipping('{"id":"p","extra_cost":null}')).toBe('{"id":"p","extra_cost":0}')
   expect(purchasePayloadWithShipping('{"id":"p","extra_cost":2000}')).toBeNull()

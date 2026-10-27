@@ -7,8 +7,37 @@ function mysqlDateTime(value: unknown): unknown {
   return `${match[1]} ${match[2]}`
 }
 
+function isJsonText(value: string): boolean {
+  try {
+    JSON.parse(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** settings.value is a MySQL JSON column. A sentence or an empty box is not JSON until it is quoted. */
+export function settingValueForServer(value: unknown): unknown {
+  if (value == null) return null
+  if (typeof value === 'string') return value !== '' && isJsonText(value) ? value : JSON.stringify(value)
+  return JSON.stringify(value)
+}
+
+/** A pulled JSON string comes back with quotes. Lists and objects stay as JSON text for the local readers. */
+export function settingValueFromServer(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (typeof parsed === 'string') return parsed
+  } catch {
+    return value
+  }
+  return value
+}
+
 export function rowToServer(table: string, row: Record<string, unknown>): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...row }
+  if (table === 'settings' && 'value' in copy) copy.value = settingValueForServer(copy.value)
   for (const field of MONEY_FIELDS[table] ?? []) {
     const value = copy[field]
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -44,6 +73,7 @@ export function purchasePayloadWithShipping(payload: string): string | null {
 
 export function rowFromServer(table: string, row: Record<string, unknown>): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...row }
+  if (table === 'settings' && 'value' in copy) copy.value = settingValueFromServer(copy.value)
   for (const field of MONEY_FIELDS[table] ?? []) {
     if (copy[field] != null && copy[field] !== '') {
       copy[field] = Math.round(Number(copy[field]) * 100)

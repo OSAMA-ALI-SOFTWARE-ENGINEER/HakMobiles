@@ -1,3 +1,5 @@
+import { settingText } from './settings'
+
 export const BRAND_PRESETS = [
   { id: 'indigo', label: 'Indigo', color: '#465fff' },
   { id: 'teal', label: 'Teal', color: '#0F766E' },
@@ -27,19 +29,8 @@ export interface DocumentBrand {
 }
 
 function textSetting(settings: Record<string, unknown>[], key: string, fallback: string): string {
-  const raw = settings.find((row) => row.key === key)?.value
-  if (typeof raw !== 'string') return fallback
-  const trimmed = raw.trim()
-  if (trimmed === '') return fallback
-  if (trimmed.startsWith('"')) {
-    try {
-      const parsed = JSON.parse(trimmed) as unknown
-      if (typeof parsed === 'string' && parsed.trim() !== '') return parsed
-    } catch {
-      return trimmed
-    }
-  }
-  return trimmed
+  const text = settingText(settings.find((row) => row.key === key)?.value).trim()
+  return text === '' ? fallback : text
 }
 
 export function brandPreset(id: string): (typeof BRAND_PRESETS)[number] {
