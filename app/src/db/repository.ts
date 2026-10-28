@@ -2,7 +2,15 @@ import { v7 as uuidv7 } from 'uuid'
 import { SCHEMA_SQL, type Sql } from './schema'
 
 export function migrate(sql: Sql): void {
-  sql.exec(SCHEMA_SQL)
+  const statements = SCHEMA_SQL.split(';').map((statement) => statement.trim()).filter(Boolean)
+  for (const statement of statements) {
+    try {
+      sql.exec(statement)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/duplicate column name/i.test(message)) throw error
+    }
+  }
 }
 
 export function saveStatements(table: string, row: Record<string, unknown>, opId: string): { sql: string; params: unknown[] }[] {

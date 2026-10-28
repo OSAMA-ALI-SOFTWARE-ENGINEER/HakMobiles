@@ -2,7 +2,7 @@
 
 Offline-first wholesale tracker. The React app keeps a local SQLite database and syncs to the Laravel API. Stock, profit, and partner balances are calculated from ledger rows.
 
-The API in this repository is Laravel 13 because that is the current release `composer create-project` installs, and it runs on PHP 8.3. The product rules are the ones in [docs/PRD.md](docs/PRD.md).
+The API in this repository is Laravel 13 because that is the current release `composer create-project` installs, and it runs on PHP 8.3. The product rules are the ones in [docs/PRD.md](docs/PRD.md). How to use the screens day to day is in [docs/USAGE.md](docs/USAGE.md). The MySQL structure that matches this install is in [api/database/schema/hak_tracker.sql](api/database/schema/hak_tracker.sql).
 
 ## Run locally
 

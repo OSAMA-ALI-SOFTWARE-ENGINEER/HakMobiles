@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS products (
   alert_level INTEGER,
   barcode TEXT,
   photo_path TEXT,
+  purged_at TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
@@ -24,6 +25,16 @@ CREATE TABLE IF NOT EXISTS customers (
   city TEXT,
   email TEXT,
   credit_limit INTEGER,
+  status TEXT DEFAULT 'lead',
+  shop_type TEXT,
+  tags TEXT,
+  source TEXT,
+  assigned_to TEXT,
+  whatsapp TEXT,
+  postcode TEXT,
+  payment_terms INTEGER,
+  notes TEXT,
+  purged_at TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
@@ -35,6 +46,13 @@ CREATE TABLE IF NOT EXISTS suppliers (
   phone TEXT,
   country TEXT,
   email TEXT,
+  first_name TEXT,
+  last_name TEXT,
+  address TEXT,
+  home_address TEXT,
+  nif TEXT,
+  whatsapp TEXT,
+  purged_at TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
@@ -53,6 +71,8 @@ CREATE TABLE IF NOT EXISTS purchases (
   supplier_id TEXT NOT NULL,
   date TEXT NOT NULL,
   invoice_no TEXT,
+  extra_cost INTEGER NOT NULL DEFAULT 0,
+  purged_at TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
@@ -63,6 +83,7 @@ CREATE TABLE IF NOT EXISTS purchase_lines (
   product_id TEXT NOT NULL,
   qty INTEGER NOT NULL,
   unit_cost INTEGER NOT NULL,
+  qty_received INTEGER,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
@@ -74,6 +95,7 @@ CREATE TABLE IF NOT EXISTS sales (
   date TEXT NOT NULL,
   sold_by TEXT,
   note TEXT,
+  purged_at TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
@@ -141,6 +163,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   amount_eur INTEGER NOT NULL,
   paid_by TEXT,
   receipt_path TEXT,
+  purged_at TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
