@@ -924,7 +924,17 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
   const [period, setPeriod] = useState<DashboardPeriod>('twelve')
   const [from, setFrom] = useState(() => `${lisbonToday().slice(0, 7)}-01`)
   const [to, setTo] = useState(() => lisbonToday())
-  const view = dashboardView(tables, period, lisbonToday(), period === 'custom' ? { start: from, end: to } : undefined)
+  const today = lisbonToday()
+  const overdueDays = settingNumber(tables.settings, 'overdue_days', 30)
+  const view = dashboardView(tables, period, today, period === 'custom' ? { start: from, end: to } : undefined)
+  const weekFollowUps = tables.follow_ups.filter((row) => !row.done_at && dueWithin(String(row.due_at ?? ''), today, 7))
+  const weekInvoices = invoiceStandings({
+    sales: tables.sales.map((sale) => ({ id: String(sale.id), invoice_no: String(sale.invoice_no ?? ''), customer_id: String(sale.customer_id), date: sale.date == null ? null : String(sale.date) })),
+    lines: tables.sale_lines.map((line) => ({ sale_id: String(line.sale_id), qty: Number(line.qty), unit_price: Number(line.unit_price), discount: Number(line.discount ?? 0) })),
+    allocations: tables.payment_allocations.map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
+    today,
+    overdueDays,
+  }).filter((invoice) => invoice.status !== 'Paid' && dueWithin(dueOn(invoice.date, overdueDays), today, 7))
   const downloadBackup = () => {
     const bytes = tablesToWorkbook(tables)
     let checked = false
@@ -977,7 +987,7 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
       <section className="panel alert-panel" aria-label="Alerts">
         <div className="notice-head">
           <h2>Alerts</h2>
-          <button type="button" className="btn-ghost notice-read" disabled={notices.length === 0} onClick={onMarkAllRead}>Mark all as read</button>
+          {notices.length > 0 && <button type="button" className="btn-ghost notice-read" onClick={onMarkAllRead}>Mark all as read</button>}
         </div>
         {notices.length === 0 && <p className="quiet">Nothing needs attention.</p>}
         {notices.length > 0 && (
@@ -1047,28 +1057,23 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
             const sold = tables.sale_lines.filter((line) => line.product_id === product?.id && String(tables.sales.find((sale) => sale.id === line.sale_id)?.date ?? '') >= since).reduce((sum, line) => sum + Number(line.qty), 0)
             const ordered = tables.purchase_lines.filter((line) => line.product_id === product?.id).reduce((sum, line) => sum + onOrderQty(Number(line.qty), line.qty_received == null || line.qty_received === '' ? Number(line.qty) : Number(line.qty_received)), 0)
             const suggest = product ? reorderSuggestion(sold, item.qty, ordered) : 0
-            return <li key={item.code} data-status={item.status}>{product ? <Link to={`/products?product=${product.id}`}>{label}</Link> : label}{suggest > 0 && product ? <> · <Link to={`/purchases?new=1&product=${product.id}`}>Reorder {suggest}</Link></> : null}</li>
+            return <li key={item.code} data-status={item.status}><span className="row-copy">{product ? <Link to={`/products?product=${product.id}`}>{label}</Link> : label}</span>{suggest > 0 && product ? <Link className="btn-ghost" to={`/purchases?new=1&product=${product.id}`}>Reorder {suggest}</Link> : null}</li>
           })}</ul>
-          <Link to="/products">All products</Link>
+          <div className="tool-row"><Link className="btn-ghost" to="/products">All products</Link></div>
         </div>
       </div>
       <div className="split">
         <div className="panel">
           <h2>Next 7 days</h2>
-          <ul className="record-list">
-            {tables.follow_ups.filter((row) => !row.done_at && dueWithin(String(row.due_at ?? ''), lisbonToday(), 7)).map((row) => (
+          {weekFollowUps.length + weekInvoices.length === 0 && <p className="quiet">Nothing due in the next 7 days.</p>}
+          {weekFollowUps.length + weekInvoices.length > 0 && <ul className="record-list">
+            {weekFollowUps.map((row) => (
               <li key={String(row.id)}><Link to="/follow-ups">{String(row.title)} · {String(row.due_at).slice(0, 10)}</Link></li>
             ))}
-            {invoiceStandings({
-              sales: tables.sales.map((sale) => ({ id: String(sale.id), invoice_no: String(sale.invoice_no ?? ''), customer_id: String(sale.customer_id), date: sale.date == null ? null : String(sale.date) })),
-              lines: tables.sale_lines.map((line) => ({ sale_id: String(line.sale_id), qty: Number(line.qty), unit_price: Number(line.unit_price), discount: Number(line.discount ?? 0) })),
-              allocations: tables.payment_allocations.map((row) => ({ sale_id: String(row.sale_id), amount: Number(row.amount) })),
-              today: lisbonToday(),
-              overdueDays: settingNumber(tables.settings, 'overdue_days', 30),
-            }).filter((invoice) => invoice.status !== 'Paid' && dueWithin(dueOn(invoice.date, settingNumber(tables.settings, 'overdue_days', 30)), lisbonToday(), 7)).map((invoice) => (
-              <li key={invoice.id}><Link to={`/sales?invoice=${invoice.id}`}>{invoice.invoiceNo} due {dueOn(invoice.date, settingNumber(tables.settings, 'overdue_days', 30))}</Link></li>
+            {weekInvoices.map((invoice) => (
+              <li key={invoice.id}><Link to={`/sales?invoice=${invoice.id}`}>{invoice.invoiceNo} due {dueOn(invoice.date, overdueDays)}</Link></li>
             ))}
-          </ul>
+          </ul>}
         </div>
         <div className="panel">
           <h2>Recent invoices</h2>
@@ -1126,7 +1131,10 @@ function Dashboard({ tables, showProfit, canBackup = false, notices = [], onMark
               .slice(0, 5)
               .map((row) => (
                 <li key={String(row.shop.id)}>
-                  <Link to={`/customers/${row.shop.id}`}>{String(row.shop.shop_name)}</Link> · {centsToEuros(row.owed)}
+                  <span className="row-copy">
+                    <Link to={`/customers/${row.shop.id}`}>{String(row.shop.shop_name)}</Link>
+                    <span className="quiet">{centsToEuros(row.owed)}</span>
+                  </span>
                   {(row.shop.whatsapp || row.shop.phone) && <a className="btn-ghost" href={`${whatsAppLink(String(row.shop.whatsapp || row.shop.phone))}?text=${encodeURIComponent(`${row.shop.shop_name} statement. Balance due ${centsToEuros(row.owed)}.`)}`} target="_blank" rel="noreferrer">Remind</a>}
                 </li>
               ))}
