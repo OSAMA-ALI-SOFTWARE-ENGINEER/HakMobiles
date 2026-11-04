@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldKeepLocalMedia, withoutInlineMedia } from './photos'
+import { serverMediaToKeep, shouldKeepLocalMedia, withoutInlineMedia } from './photos'
 
 describe('photo sync', () => {
   it('leaves a data url out of the server payload', () => {
@@ -14,5 +14,14 @@ describe('photo sync', () => {
     expect(shouldKeepLocalMedia('', 'data:image/png;base64,aaaa')).toBe(true)
     expect(shouldKeepLocalMedia('uploads/products/a.jpg', 'data:image/png;base64,aaaa')).toBe(false)
     expect(shouldKeepLocalMedia(null, 'uploads/products/a.jpg')).toBe(false)
+  })
+
+  it('takes a photo saved on another device and leaves a preview that is still uploading', () => {
+    expect(serverMediaToKeep('uploads/products/a.jpg', null)).toBe('uploads/products/a.jpg')
+    expect(serverMediaToKeep('uploads/products/a.jpg', '')).toBe('uploads/products/a.jpg')
+    expect(serverMediaToKeep('uploads/products/b.jpg', 'uploads/products/a.jpg')).toBe('uploads/products/b.jpg')
+    expect(serverMediaToKeep('uploads/products/a.jpg', 'uploads/products/a.jpg')).toBeNull()
+    expect(serverMediaToKeep('uploads/products/a.jpg', 'data:image/png;base64,aaaa')).toBeNull()
+    expect(serverMediaToKeep(null, '')).toBeNull()
   })
 })

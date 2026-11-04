@@ -26,7 +26,7 @@ export async function uploadPendingMedia(token: string): Promise<void> {
       if (typeof value !== 'string' || !value.startsWith('data:')) continue
       try {
         const path = await uploadRecordFile(token, job.table, String(row.id), value)
-        await saveLocal(job.table, { ...row, [job.column]: path })
+        await saveLocal(job.table, { ...row, [job.column]: path, updated_at: new Date().toISOString() })
       } catch {
         // The row may not be on the server yet. The next sync tries again.
       }

@@ -30,7 +30,16 @@
     RewriteRule ^ index.html [L]
 </IfModule>
 
+AddType application/manifest+json .webmanifest
+AddType application/wasm .wasm
+
 <IfModule mod_headers.c>
     Header always set Cross-Origin-Opener-Policy "same-origin"
     Header always set Cross-Origin-Embedder-Policy "credentialless"
+    <FilesMatch "\.webmanifest$">
+        Header always set Content-Type "application/manifest+json"
+    </FilesMatch>
+    <FilesMatch "\.wasm$">
+        Header always set Content-Type "application/wasm"
+    </FilesMatch>
 </IfModule>

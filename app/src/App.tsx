@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeftRight, BarChart3, Bell, Calendar, CalendarDays, ChevronDown, Eye, EyeOff, Kanban, LayoutDashboard, LogOut, Package, Receipt, ScrollText, Search, Settings, Shield, ShoppingBag, Store, Truck, Wallet, type LucideIcon } from 'lucide-react'
+import { ArrowLeftRight, BarChart3, Bell, Calendar, CalendarDays, ChevronDown, Eye, EyeOff, Kanban, LayoutDashboard, LogOut, Menu, Package, Plus, Receipt, ScrollText, Search, Settings, Shield, ShoppingBag, Store, Truck, Wallet, X, type LucideIcon } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Bar, CartesianGrid, ComposedChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -42,7 +42,7 @@ import { backupName, dashboardView, dueOn, type DashboardPeriod } from './shared
 import { brandPreset, documentBrand } from './shared/brand'
 import { applyFavicon } from './ui/InstallPrompt'
 import { addDays, dueWithin, recurringDue, reorderSuggestion, settleTransfers, type RecurringCost } from './shared/work'
-import { withoutInlineMedia, shouldKeepLocalMedia } from './shared/photos'
+import { readPhotoFile, serverMediaToKeep, withoutInlineMedia, shouldKeepLocalMedia } from './shared/photos'
 import { syncFailureNotice } from './sync/engine'
 import { tablesFromWorkbook, tablesToWorkbook } from './shared/trackerImport'
 import { RecordImage } from './ui/RecordImage'
@@ -143,6 +143,8 @@ export default function App() {
   const [notice, setNotice] = useState('')
   const [unlocked, setUnlocked] = useState(sessionStorage.getItem('hak.unlocked') === 'yes')
   const [query, setQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [remoteLogo, setRemoteLogo] = useState('')
   const [newOpen, setNewOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
@@ -152,6 +154,8 @@ export default function App() {
   const [readNoticeIds, setReadNoticeIds] = useState<string[]>([])
   const [mutedLocal, setMutedLocal] = useState<string[]>([])
   const sidebarDrag = useRef<{ startX: number; startW: number } | null>(null)
+  const sessionRef = useRef(session)
+  sessionRef.current = session
   const [profileOpen, setProfileOpen] = useState(false)
   const navigate = useNavigate()
 
@@ -169,6 +173,12 @@ export default function App() {
   useEffect(() => {
     applyFavicon(documentBrand(tables.settings).logo)
   }, [tables.settings])
+
+  useEffect(() => {
+    api('/api/brand').then((row) => {
+      if (typeof row.logo === 'string' && row.logo.startsWith('data:image/')) setRemoteLogo(row.logo)
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (!session) return
@@ -238,6 +248,8 @@ export default function App() {
       }
     }
     const syncOnce = async () => {
+      const current = sessionRef.current
+      if (!current) return
       try {
         await whenBatchIdle()
         setStatus('Syncing')
@@ -257,7 +269,7 @@ export default function App() {
                 payload: rowToServer(row.table_name, withoutInlineMedia(JSON.parse(row.payload) as Record<string, unknown>)),
               })),
             }),
-          }, session.token)
+          }, current.token)
           rejected.push(...((pushed.rejected as { reason: string }[] | undefined) ?? []))
           const accepted = (pushed.accepted as string[]) ?? []
           if (accepted.length > 0) {
@@ -265,20 +277,33 @@ export default function App() {
           }
           if (accepted.length === 0) break
         }
-        await uploadPendingMedia(session.token)
+        await uploadPendingMedia(current.token)
         let since = (await browserQuery<{ last_seq: number }>('SELECT last_seq FROM sync_state WHERE id = 1'))[0]?.last_seq ?? 0
         for (;;) {
-          const pulled = await api(`/api/sync/pull?since=${since}`, {}, session.token)
+          const pulled = await api(`/api/sync/pull?since=${since}`, {}, current.token)
           const changes = (pulled.changes as { table: string; record_id: string; data: Record<string, unknown> }[]) ?? []
           for (const change of changes) {
-            if (pending.has(change.record_id) || !/^[a-z_]+$/.test(change.table)) continue
+            if (!/^[a-z_]+$/.test(change.table)) continue
             const known = new Set((await browserQuery<{ name: string }>(`PRAGMA table_info(${change.table})`)).map((column) => column.name))
             const data = Object.fromEntries(Object.entries(rowFromServer(change.table, change.data)).filter(([column]) => known.has(column)))
+            const media: Record<string, unknown> = {}
             for (const column of ['photo_path', 'receipt_path']) {
               if (!known.has(column)) continue
               const existing = await browserQuery<Record<string, unknown>>(`SELECT ${column} FROM ${change.table} WHERE id = ?`, [change.record_id])
-              if (shouldKeepLocalMedia(data[column], existing[0]?.[column])) delete data[column]
+              const local = existing[0]?.[column]
+              if (shouldKeepLocalMedia(data[column], local)) delete data[column]
+              const taken = serverMediaToKeep(data[column], local)
+              if (taken) media[column] = taken
             }
+            if (pending.has(change.record_id)) {
+              if (Object.keys(media).length === 0) continue
+              await browserQuery(
+                `UPDATE ${change.table} SET ${Object.keys(media).map((column) => `${column} = ?`).join(', ')} WHERE id = ?`,
+                [...Object.values(media), change.record_id],
+              )
+              continue
+            }
+            Object.assign(data, media)
             const columns = Object.keys(data)
             if (columns.length === 0) continue
             const updates = columns.filter((column) => column !== 'id').map((column) => `${column} = excluded.${column}`).join(', ')
@@ -292,6 +317,14 @@ export default function App() {
           if (!pulled.more) break
         }
         await refresh()
+        const profile = await api('/api/auth/me', {}, current.token).catch(() => null)
+        const reported = (profile?.user as { avatar_path?: string | null } | undefined)?.avatar_path
+        const avatarPath = typeof reported === 'string' ? reported : ''
+        const latest = sessionRef.current
+        if (profile && latest && avatarPath !== latest.avatarPath) {
+          writeSession({ ...latest, avatarPath })
+          setSession({ ...latest, avatarPath })
+        }
         const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         if (rejected.length > 0) {
           setStatus('Needs attention')
@@ -327,7 +360,7 @@ export default function App() {
       window.removeEventListener('hak-saved', syncSoon)
       window.removeEventListener('online', run)
     }
-  }, [session])
+  }, [session?.token])
 
   if (!session) return <Login onSuccess={(next, remember) => { writeSession(next, remember); setSession(next) }} />
   if (session.mustChangePassword) {
@@ -476,6 +509,9 @@ export default function App() {
       </aside>
       <div className="workspace">
         <header className="topbar">
+          <Link to="/" className="topbar-logo" aria-label={brand.name}>
+            {(brand.logo || remoteLogo) ? <img className="brand-logo" src={brand.logo || remoteLogo} alt="" /> : <span className="mark" aria-hidden="true"><i /><i /></span>}
+          </Link>
           <label className="search">
             <Search aria-hidden="true" size={18} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a product, shop or invoice" aria-label="Find a record" />
@@ -492,7 +528,7 @@ export default function App() {
             )}
           </label>
           <div className="top-actions">
-            <div className="account">
+            <div className="account new-launch">
               <button type="button" className="btn" aria-expanded={desktopNew} aria-haspopup="menu" onClick={() => { setNoticesOpen(false); setAccountOpen(false); setDesktopNew((open) => !open) }}>New</button>
               {desktopNew && (
                 <div className="new-menu" role="menu" aria-label="New">
@@ -501,8 +537,11 @@ export default function App() {
               )}
             </div>
             <p className={`status ${statusTone(status)}`} title={`${status}${notice ? ` · ${notice}` : ''}`}><i />{status}{notice ? ` · ${notice}` : ''}</p>
-            <div className="account">
-              <button type="button" className="icon-btn" aria-label="Notifications" aria-expanded={noticesOpen} onClick={() => { setAccountOpen(false); setNoticesOpen((open) => !open) }}>
+            <button type="button" className="icon-btn search-launch" aria-label="Search" aria-expanded={searchOpen} onClick={() => { setNoticesOpen(false); setAccountOpen(false); setSearchOpen(true) }}>
+              <Search size={18} />
+            </button>
+            <div className="account notify-launch">
+              <button type="button" className="icon-btn" aria-label="Notifications" aria-expanded={noticesOpen} onClick={() => { setAccountOpen(false); setSearchOpen(false); setNoticesOpen((open) => !open) }}>
                 <Bell size={18} />
                 {notices.length > 0 && <span className="count">{notices.length}</span>}
               </button>
@@ -527,8 +566,8 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div className="account">
-              <button type="button" className="user-chip" aria-label={`Account, ${session.userName}`} aria-expanded={accountOpen} onClick={() => { setNoticesOpen(false); setAccountOpen((open) => !open) }}>
+            <div className="account account-launch">
+              <button type="button" className="user-chip" aria-label={`Account, ${session.userName}`} aria-expanded={accountOpen} onClick={() => { setNoticesOpen(false); setSearchOpen(false); setAccountOpen((open) => !open) }}>
                 <AccountAvatar session={session} />
                 {session.userName}
                 <ChevronDown size={16} aria-hidden="true" />
@@ -546,6 +585,31 @@ export default function App() {
             </div>
           </div>
         </header>
+        {searchOpen && (
+          <div className="popup-backdrop" onClick={() => setSearchOpen(false)}>
+            <div className="popup sheet search-popup" role="dialog" aria-label="Search" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setSearchOpen(false) }}>
+              <div className="popup-head">
+                <h2>Search</h2>
+                <button type="button" className="icon-btn" aria-label="Close search" onClick={() => setSearchOpen(false)}><X size={18} /></button>
+              </div>
+              <label className="search">
+                <Search aria-hidden="true" size={18} />
+                <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a product, shop or invoice" aria-label="Find a record" />
+                {found.length > 0 && (
+                  <ul className="find-results">
+                    {found.map((item) => (
+                      <li key={item.id}>
+                        <span className="kind">{item.kind}</span>
+                        <button type="button" role="option" onClick={() => { setQuery(''); setSearchOpen(false); navigate(item.to) }}>{item.label}</button>
+                        {item.saleTo && <button type="button" onClick={() => { setQuery(''); setSearchOpen(false); navigate(item.saleTo) }}>New sale</button>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </label>
+            </div>
+          </div>
+        )}
         <main className="content">
         <ModuleBody ready={booksReady}>
         <Routes>
@@ -593,24 +657,30 @@ export default function App() {
         </main>
       </div>
       <nav className="bottom-nav" aria-label="Primary">
-        <NavLink to="/" end>Dashboard</NavLink>
-        <NavLink to="/sales">Sales</NavLink>
-        <button type="button" onClick={() => { setMoreOpen(false); setNewOpen((open) => !open) }}>New</button>
-        <NavLink to="/customers">Customers</NavLink>
-        <button type="button" onClick={() => { setNewOpen(false); setMoreOpen((open) => !open) }}>More</button>
+        <NavLink to="/" end><LayoutDashboard aria-hidden="true" size={20} /><span>Dashboard</span></NavLink>
+        <NavLink to="/sales"><Receipt aria-hidden="true" size={20} /><span>Sales</span></NavLink>
+        <button type="button" onClick={() => { setMoreOpen(false); setNewOpen((open) => !open) }}><Plus aria-hidden="true" size={20} /><span>New</span></button>
+        <NavLink to="/customers"><Store aria-hidden="true" size={20} /><span>Customers</span></NavLink>
+        <button type="button" onClick={() => { setNewOpen(false); setMoreOpen((open) => !open) }}><Menu aria-hidden="true" size={20} /><span>More</span></button>
       </nav>
       {newOpen && (
         <div className="bottom-sheet" role="menu" aria-label="New">
-          <Link to="/sales" onClick={() => setNewOpen(false)}>New sale</Link>
-          <Link to="/payments" onClick={() => setNewOpen(false)}>New payment</Link>
-          <Link to="/customers" onClick={() => setNewOpen(false)}>New customer</Link>
+          <Link to="/sales" onClick={() => setNewOpen(false)}><Receipt aria-hidden="true" size={18} /> New sale</Link>
+          <Link to="/payments" onClick={() => setNewOpen(false)}><Wallet aria-hidden="true" size={18} /> New payment</Link>
+          <Link to="/customers" onClick={() => setNewOpen(false)}><Store aria-hidden="true" size={18} /> New customer</Link>
         </div>
       )}
       {moreOpen && (
         <div className="bottom-sheet" aria-label="More">
-          {menu.filter((item) => !['Dashboard', 'Sales', 'Customers'].includes(item.label)).map((item) => (
-            <NavLink key={item.path} to={item.path} onClick={() => setMoreOpen(false)}>{item.label}</NavLink>
-          ))}
+          {menu.filter((item) => !['Dashboard', 'Sales', 'Customers'].includes(item.label)).map((item) => {
+            const Icon = menuIcons[item.label] ?? LayoutDashboard
+            return (
+              <NavLink key={item.path} to={item.path} onClick={() => setMoreOpen(false)}>
+                <Icon aria-hidden="true" size={18} />
+                {item.label}
+              </NavLink>
+            )
+          })}
         </div>
       )}
       <ProfileDialog session={session} open={profileOpen} muted={mutedLocal} onClose={() => setProfileOpen(false)} onSaved={saveSession} onMute={setMutedLocal} />
@@ -1474,9 +1544,7 @@ function Products({ tables, token, canManage, canAdjust, canSeeCost, onSaved }: 
             <input aria-label="Photo" type="file" accept="image/*" className="control" onChange={(event) => {
               const file = event.target.files?.[0]
               if (!file) { setPhoto(null); return }
-              const reader = new FileReader()
-              reader.onload = () => setPhoto(typeof reader.result === 'string' ? reader.result : null)
-              reader.readAsDataURL(file)
+              void readPhotoFile(file).then(setPhoto).catch(() => setPhoto(null))
             }} />
           </label>
           <div className="form-span">{photo ? <RecordImage path={photo} token={token} alt="Chosen photo" large /> : <span className="photo-placeholder large" aria-hidden="true"><Package size={36} /></span>}</div>
@@ -2186,9 +2254,7 @@ function ExpenseEntry({ tables, token, canManage = true, onSaved }: { tables: Lo
             <input aria-label="Receipt" type="file" accept="image/*" className="control" onChange={(event) => {
               const file = event.target.files?.[0]
               if (!file) { setReceipt(null); return }
-              const reader = new FileReader()
-              reader.onload = () => setReceipt(typeof reader.result === 'string' ? reader.result : null)
-              reader.readAsDataURL(file)
+              void readPhotoFile(file).then(setReceipt).catch(() => setReceipt(null))
             }} />
           </label>
           {receipt && <RecordImage path={receipt} token={token} alt="Receipt" large />}
