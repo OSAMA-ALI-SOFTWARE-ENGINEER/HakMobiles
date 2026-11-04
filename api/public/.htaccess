@@ -41,5 +41,6 @@ AddType application/wasm .wasm
     </FilesMatch>
     <FilesMatch "\.wasm$">
         Header always set Content-Type "application/wasm"
+        Header always set Cache-Control "no-cache"
     </FilesMatch>
 </IfModule>

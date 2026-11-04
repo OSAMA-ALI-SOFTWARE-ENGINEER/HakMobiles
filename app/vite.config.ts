@@ -1,12 +1,28 @@
+import { copyFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vitest/config'
 
+function stableSqliteWasm() {
+  return {
+    name: 'stable-sqlite-wasm',
+    apply: 'build' as const,
+    closeBundle() {
+      const dir = join(process.cwd(), 'dist', 'assets')
+      const hashed = readdirSync(dir).find((name) => /^sqlite3-.*\.wasm$/.test(name))
+      if (!hashed) return
+      copyFileSync(join(dir, hashed), join(dir, 'sqlite3.wasm'))
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    stableSqliteWasm(),
     VitePWA({
       disable: process.env.VITEST === 'true',
       registerType: 'autoUpdate',
