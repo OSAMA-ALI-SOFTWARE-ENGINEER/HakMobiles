@@ -310,7 +310,7 @@ h1, h2, .brand-name, .money { font-weight: 600; letter-spacing: -0.02em; }
 .report-table th { color: var(--muted); font-size: 13px; font-weight: 500; border-top: 0; }
 .tabs button.active { background: var(--brand-soft); color: var(--brand); border-color: transparent; }
 .control-line { display: grid; gap: 6px; max-width: 280px; margin-bottom: 12px; font-size: 13px; color: #667085; }
-.board { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px; overflow-x: auto; }
+.board { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; }
 .column { background: #f8fafc; border: 1px solid var(--line); border-top: 3px solid #98a2b3; border-radius: 12px; padding: 12px; min-height: 180px; }
 .column[data-stage="lead"] { border-top-color: #98a2b3; }
 .column[data-stage="contacted"] { border-top-color: #465fff; background: #f5f8ff; }
@@ -402,6 +402,7 @@ textarea.control { height: auto; padding: 10px 14px; }
 .report-table th, .report-table td { padding: 10px 8px; border-bottom: 1px solid #eaecf0; text-align: left; }
 .report-table .num, .record-table .num { text-align: right; }
 .table-scroll { width: 100%; max-width: 100%; min-width: 0; }
+.table-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; }
 .record-table { width: 100%; border-collapse: collapse; background: white; border: 1px solid var(--line); border-radius: 12px; }
 .record-table th, .record-table td { padding: 10px 12px; border-top: 1px solid var(--line); text-align: left; vertical-align: middle; font-variant-numeric: tabular-nums; }
 .record-table th { background: #eef2ff; color: #3538cd; font-size: 13px; font-weight: 600; border-top: 0; }
@@ -786,17 +787,43 @@ textarea.control { height: auto; padding: 10px 14px; }
 .gate-mark i:last-child { right: 22px; top: 28px; height: 28px; }
 .gate-card .field { display: grid; gap: 6px; font-size: 13px; font-weight: 650; color: #344054; }
 .gate-card .btn { width: 100%; height: 44px; border-radius: 12px; }
+.install-prompt {
+  position: fixed;
+  z-index: 40;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 28px;
+  gap: 12px;
+  width: min(360px, calc(100% - 32px));
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: white;
+  padding: 14px;
+  box-shadow: 0 16px 40px rgba(16, 24, 40, 0.12);
+}
+.install-prompt img { width: 42px; height: 42px; object-fit: contain; border-radius: 10px; background: var(--paper); }
+.install-prompt strong { display: block; font-size: 14px; }
+.install-prompt p { margin: 4px 0 10px; color: #667085; font-size: 13px; line-height: 1.4; }
+.install-prompt .btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; border-radius: 8px; padding: 0 14px; }
+.install-close { display: grid; width: 28px; height: 28px; place-items: center; border: 0; background: transparent; color: #667085; }
+@media (max-width: 800px) {
+  .gate { align-items: start; overflow: auto; padding-top: 24px; padding-bottom: 150px; }
+  .install-prompt { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; }
+  body:has(.bottom-nav) .install-prompt { bottom: calc(76px + env(safe-area-inset-bottom)); }
+}
 
 @media (min-width: 981px) {
   .app-shell { position: fixed; inset: 0; }
 }
 
 @media (max-width: 980px) {
-  html, body, #root { height: auto; overflow: auto; }
-  body { height: auto; overflow: auto; }
-  .app-shell, .split { grid-template-columns: minmax(0, 1fr); height: auto; overflow: visible; }
-  .workspace, .content, .page, .panel { min-width: 0; max-width: 100%; }
-  .workspace { height: auto; overflow: visible; }
+  html, body, #root { height: auto; max-width: 100%; overflow-x: clip; overflow-y: auto; }
+  body { height: auto; overflow-x: clip; overflow-y: auto; }
+  .app-shell, .split { grid-template-columns: minmax(0, 1fr); height: auto; max-width: 100%; overflow-x: clip; }
+  .workspace, .content, .page, .panel, .topbar, .gate, .metrics, .line-grid { min-width: 0; max-width: 100%; }
+  .workspace { height: auto; overflow-x: clip; }
+  .content { overflow-x: clip; }
   .sidebar { display: none; }
   .page-head { flex-direction: column; align-items: stretch; }
   .money, .quiet, .lede { overflow-wrap: anywhere; }
@@ -818,12 +845,15 @@ textarea.control { height: auto; padding: 10px 14px; }
   .top-actions > .status { grid-area: status; min-width: 0; white-space: normal; }
   .top-actions > .account:nth-child(3) { grid-area: bell; justify-self: end; }
   .top-actions > .account:nth-child(4) { grid-area: account; justify-self: end; }
-  .content { padding: 16px 16px calc(88px + env(safe-area-inset-bottom)); overflow: visible; }
+  .content { padding: 16px 16px calc(88px + env(safe-area-inset-bottom)); overflow-x: clip; overflow-y: visible; }
+  .record-table { min-width: 640px; }
+  .page-head h1, .gate-card h1, .topbar, input, select, button { max-width: 100%; }
+  .user-menu, .notice-menu { width: min(320px, calc(100% - 24px)); }
   .bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
   .table-scroll { overflow-x: auto; }
   .filters .control { min-width: min(180px, 100%); }
   .insight-page .page-head h1 { font-size: 26px; }
-  .user-menu, .notice-menu { position: fixed; top: 164px; right: 12px; left: auto; width: min(320px, calc(100vw - 24px)); }
+  .user-menu, .notice-menu { position: fixed; top: 164px; right: 12px; left: auto; width: min(320px, calc(100% - 24px)); }
   .new-menu { position: fixed; top: 164px; left: 12px; right: auto; }
   .user-chip { font-size: 0; }
   .user-chip .avatar, .user-chip svg { font-size: 14px; }

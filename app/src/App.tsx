@@ -40,6 +40,7 @@ import { customerStatement } from './shared/reports'
 import { onOrderQty, purchaseLedgerRows, supplierMoney } from './shared/purchases'
 import { backupName, dashboardView, dueOn, type DashboardPeriod } from './shared/dashboard'
 import { brandPreset, documentBrand } from './shared/brand'
+import { applyFavicon } from './ui/InstallPrompt'
 import { addDays, dueWithin, recurringDue, reorderSuggestion, settleTransfers, type RecurringCost } from './shared/work'
 import { withoutInlineMedia, shouldKeepLocalMedia } from './shared/photos'
 import { syncFailureNotice } from './sync/engine'
@@ -164,6 +165,10 @@ export default function App() {
       .catch(() => setNotice('Local database is still opening.'))
       .finally(() => setBooksReady(true))
   }, [])
+
+  useEffect(() => {
+    applyFavicon(documentBrand(tables.settings).logo)
+  }, [tables.settings])
 
   useEffect(() => {
     if (!session) return
@@ -730,7 +735,10 @@ function Login({ onSuccess }: { onSuccess: (session: Session, remember: boolean)
       try {
         const rows = await browserQuery<Record<string, unknown>>('SELECT key, value FROM settings WHERE key IN (?, ?)', ['company_name', 'document_design'])
         const local = documentBrand(rows)
-        if (!cancel && local.logo) setBrand(local)
+        if (!cancel && local.logo) {
+          setBrand(local)
+          applyFavicon(local.logo)
+        }
       } catch {
         // The local books are not open yet.
       }
@@ -740,7 +748,9 @@ function Login({ onSuccess }: { onSuccess: (session: Session, remember: boolean)
         const preset = brandPreset(typeof remote.color === 'string' ? remote.color : 'indigo')
         const logo = typeof remote.logo === 'string' && remote.logo.startsWith('data:image/') ? remote.logo : ''
         const name = typeof remote.name === 'string' && remote.name.trim() !== '' ? remote.name.trim() : 'HAK Wholesales'
-        setBrand((current) => ({ ...current, name, logo: logo || current.logo, color: preset.color, preset: preset.id }))
+        const nextLogo = logo || ''
+        setBrand((current) => ({ ...current, name, logo: nextLogo || current.logo, color: preset.color, preset: preset.id }))
+        if (nextLogo) applyFavicon(nextLogo)
       } catch {
         // Keep the logo already stored on this device.
       }

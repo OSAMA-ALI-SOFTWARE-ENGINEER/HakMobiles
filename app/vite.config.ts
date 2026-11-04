@@ -10,13 +10,18 @@ export default defineConfig({
     VitePWA({
       disable: process.env.VITEST === 'true',
       registerType: 'autoUpdate',
+      includeAssets: ['favicon.png', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
-        name: 'HAK Wholesales Tracker',
+        name: 'HAK Wholesales',
         short_name: 'HAK',
         start_url: '/',
         display: 'standalone',
-        background_color: '#f4f1ea',
-        theme_color: '#0F766E',
+        background_color: '#f4f6fb',
+        theme_color: '#9f1239',
+        icons: [
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+        ],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,wasm}'],
