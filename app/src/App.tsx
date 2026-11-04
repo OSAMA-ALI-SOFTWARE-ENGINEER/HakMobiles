@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeftRight, BarChart3, Bell, Calendar, CalendarDays, ChevronDown, Eye, EyeOff, Kanban, LayoutDashboard, LogOut, Package, Receipt, ScrollText, Search, Settings, Shield, ShoppingBag, Store, Truck, Wallet, type LucideIcon } from 'lucide-react'
 import { useForm } from 'react-hook-form'
@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Bar, CartesianGrid, ComposedChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
-import { api, ApiError } from './api'
+import { api, ApiError, apiUrl, desktopApp } from './api'
 import { ActivityScreen, DevicesPanel, RolesPanel } from './admin/AdminScreens'
 import { SettingsScreen } from './admin/SettingsScreen'
 import { Customer360, FollowUps, Pipeline } from './crm/CrmScreens'
@@ -39,7 +39,7 @@ import { sidebarCollapsed, storedSidebarWidth } from './shared/sidebar'
 import { customerStatement } from './shared/reports'
 import { onOrderQty, purchaseLedgerRows, supplierMoney } from './shared/purchases'
 import { backupName, dashboardView, dueOn, type DashboardPeriod } from './shared/dashboard'
-import { documentBrand } from './shared/brand'
+import { brandPreset, documentBrand } from './shared/brand'
 import { addDays, dueWithin, recurringDue, reorderSuggestion, settleTransfers, type RecurringCost } from './shared/work'
 import { withoutInlineMedia, shouldKeepLocalMedia } from './shared/photos'
 import { syncFailureNotice } from './sync/engine'
@@ -660,7 +660,7 @@ function ProfileDialog({ session, open, muted, onClose, onSaved, onMute }: { ses
         body.set('record_id', session.userId)
         body.set('file', file)
         const headers = new Headers({ Accept: 'application/json', Authorization: `Bearer ${session.token}` })
-        const response = await fetch('/api/files', { method: 'POST', headers, body })
+        const response = await fetch(apiUrl('/api/files'), { method: 'POST', headers, body })
         const uploaded = await response.json().catch(() => ({})) as { path?: string; message?: string }
         if (!response.ok || !uploaded.path) throw new Error(uploaded.message ?? 'The photo could not be saved.')
         avatarPath = uploaded.path
@@ -722,18 +722,45 @@ function Login({ onSuccess }: { onSuccess: (session: Session, remember: boolean)
   const [otp, setOtp] = useState('')
   const [needsOtp, setNeedsOtp] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [brand, setBrand] = useState(() => documentBrand([]))
+
+  useEffect(() => {
+    let cancel = false
+    async function loadBrand() {
+      try {
+        const rows = await browserQuery<Record<string, unknown>>('SELECT key, value FROM settings WHERE key IN (?, ?)', ['company_name', 'document_design'])
+        const local = documentBrand(rows)
+        if (!cancel && local.logo) setBrand(local)
+      } catch {
+        // The local books are not open yet.
+      }
+      try {
+        const remote = await api('/api/brand')
+        if (cancel) return
+        const preset = brandPreset(typeof remote.color === 'string' ? remote.color : 'indigo')
+        const logo = typeof remote.logo === 'string' && remote.logo.startsWith('data:image/') ? remote.logo : ''
+        const name = typeof remote.name === 'string' && remote.name.trim() !== '' ? remote.name.trim() : 'HAK Wholesales'
+        setBrand((current) => ({ ...current, name, logo: logo || current.logo, color: preset.color, preset: preset.id }))
+      } catch {
+        // Keep the logo already stored on this device.
+      }
+    }
+    void loadBrand()
+    return () => { cancel = true }
+  }, [])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
+    const desktop = desktopApp()
     try {
       const result = await api('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({
           email: form.get('email'),
           password: form.get('password'),
-          device_name: 'Browser',
-          platform: 'web',
+          device_name: desktop ? 'Desktop' : 'Browser',
+          platform: desktop ? 'desktop' : 'web',
           app_version: '1.0.0',
           otp: otp || undefined,
         }),
@@ -767,22 +794,29 @@ function Login({ onSuccess }: { onSuccess: (session: Session, remember: boolean)
 
   return (
     <div className="gate">
-      <section className="gate-hero">
-        <p className="eyebrow">Lisbon · Wholesale</p>
-        <h2>The counter, kept to the cent.</h2>
-        <p>Stock, balances, and profit are read from the ledger. Nothing on this screen is typed in as a total.</p>
-      </section>
-      <form onSubmit={submit} className="gate-card">
-        <h1>HAK Wholesales</h1>
-        <p className="lede">Sign in on this device. The books stay here first, then sync.</p>
-        <input name="email" type="email" required placeholder="Email" aria-label="Email" className="control" />
-        <div className="secret-field">
-          <input name="password" type={showPassword ? 'text' : 'password'} required placeholder="Password" aria-label="Password" className="control" />
-          <button type="button" className="eye" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword((current) => !current)}>
-            {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
-          </button>
+      <form onSubmit={submit} className="gate-card" style={{ '--brand': brand.color } as CSSProperties}>
+        <div className="gate-brand">
+          {brand.logo ? <img className="gate-logo" src={brand.logo} alt="" /> : <span className="mark gate-mark" aria-hidden="true"><i /><i /></span>}
+          <div>
+            <p className="eyebrow">{desktopApp() ? 'Desktop' : 'Wholesale'}</p>
+            <h1>{brand.name}</h1>
+          </div>
         </div>
-        {needsOtp && <input value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="Authenticator code" aria-label="Authenticator code" className="control" />}
+        <p className="lede">Sign in on this device. The books stay here first, then sync.</p>
+        <label className="field">Email
+          <input name="email" type="email" required autoComplete="username" placeholder="name@company.com" aria-label="Email" className="control" />
+        </label>
+        <label className="field">Password
+          <span className="secret-field">
+            <input name="password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" placeholder="Password" aria-label="Password" className="control" />
+            <button type="button" className="eye" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword((current) => !current)}>
+              {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
+            </button>
+          </span>
+        </label>
+        {needsOtp && <label className="field">Authenticator code
+          <input value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="6-digit code" aria-label="Authenticator code" className="control" />
+        </label>}
         <label className="check"><input name="remember" type="checkbox" /> Remember me</label>
         {error && <p className="error">{error}</p>}
         <button className="btn">Log in</button>

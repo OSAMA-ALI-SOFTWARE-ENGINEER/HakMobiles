@@ -753,20 +753,39 @@ textarea.control { height: auto; padding: 10px 14px; }
   display: grid;
   min-height: 100vh;
   place-items: center;
-  background: var(--paper);
+  background: #f4f6fb;
   padding: 24px;
 }
 .gate-hero { display: none; }
 .gate-card {
-  width: min(420px, 100%);
+  width: min(440px, 100%);
   align-content: start;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 20px;
   background: white;
   margin: 0;
-  padding: 28px;
-  box-shadow: 0 12px 24px rgba(16, 24, 40, 0.06);
+  padding: 32px 28px 28px;
+  box-shadow: 0 16px 40px rgba(16, 24, 40, 0.08);
 }
+.gate-brand { display: flex; align-items: center; gap: 14px; }
+.gate-brand h1 { font-size: 28px; }
+.gate-brand .eyebrow { margin: 0 0 2px; }
+.gate-logo {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  object-fit: contain;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 8px;
+}
+.gate-mark { width: 72px; height: 72px; flex: none; border-radius: 18px; background: var(--brand); }
+.gate-mark i { background: white; width: 6px; }
+.gate-mark i:first-child { left: 22px; top: 16px; height: 40px; }
+.gate-mark i:last-child { right: 22px; top: 28px; height: 28px; }
+.gate-card .field { display: grid; gap: 6px; font-size: 13px; font-weight: 650; color: #344054; }
+.gate-card .btn { width: 100%; height: 44px; border-radius: 12px; }
 
 @media (min-width: 981px) {
   .app-shell { position: fixed; inset: 0; }

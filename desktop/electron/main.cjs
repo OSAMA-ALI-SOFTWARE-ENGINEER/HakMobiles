@@ -10,13 +10,34 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ])
 
+function contentType(file) {
+  const types = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json',
+    '.webmanifest': 'application/manifest+json',
+    '.wasm': 'application/wasm',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.ico': 'image/x-icon',
+  }
+  return types[path.extname(file).toLowerCase()] || 'application/octet-stream'
+}
+
 function serveApp(request) {
   const url = new URL(request.url)
   const relative = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname)
   const file = path.normalize(path.join(dist, relative))
   if (!file.startsWith(dist)) return new Response('Not found', { status: 404 })
   if (!fs.existsSync(file)) return new Response('Not found', { status: 404 })
-  return new Response(fs.readFileSync(file))
+  return new Response(fs.readFileSync(file), {
+    headers: {
+      'content-type': contentType(file),
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    },
+  })
 }
 
 ipcMain.handle('token:save', (_event, token) => {

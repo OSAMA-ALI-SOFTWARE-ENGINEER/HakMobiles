@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiUrl } from '../api'
 
 export function RecordImage({ path, token, alt, large = false }: { path: string; token: string; alt: string; large?: boolean }) {
   const [src, setSrc] = useState(path.startsWith('data:') ? path : '')
@@ -7,7 +8,7 @@ export function RecordImage({ path, token, alt, large = false }: { path: string;
     if (path.startsWith('data:')) { setSrc(path); return }
     let url = ''
     let cancelled = false
-    void fetch(`/api/files?path=${encodeURIComponent(path)}`, { headers: { Authorization: `Bearer ${token}` } })
+    void fetch(apiUrl(`/api/files?path=${encodeURIComponent(path)}`), { headers: { Authorization: `Bearer ${token}` } })
       .then((response) => response.ok ? response.blob() : null)
       .then((blob) => {
         if (!blob || cancelled) return

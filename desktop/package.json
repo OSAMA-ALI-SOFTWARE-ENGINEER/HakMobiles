@@ -20,15 +20,17 @@
       "electron/**/*",
       "../app/dist/**/*"
     ],
+    "icon": "build/icon.ico",
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "mac": {
       "target": "dmg"
     },
     "publish": {
       "provider": "generic",
-      "url": "https://tracker.yourdomain.com/downloads"
+      "url": "https://app.hakmobiles.com/downloads"
     }
   }
 }

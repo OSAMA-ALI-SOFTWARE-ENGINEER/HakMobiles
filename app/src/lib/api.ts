@@ -17,7 +17,8 @@ export async function api<T>(path: string, options: RequestInit = {}, token?: st
   }
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
-  const response = await fetch(path, { ...options, headers })
+  const base = typeof location !== 'undefined' && location.protocol === 'app:' ? 'https://app.hakmobiles.com' : ''
+  const response = await fetch(`${base}${path}`, { ...options, headers })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) throw new ApiError(response.status, body)
   return body as T

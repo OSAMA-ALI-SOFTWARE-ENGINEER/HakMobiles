@@ -1,3 +1,4 @@
+import { apiUrl } from '../api'
 import { browserQuery, loadLocal, saveLocal } from '../db/browser'
 
 export async function uploadRecordFile(token: string, table: 'products' | 'expenses', recordId: string, dataUrl: string): Promise<string> {
@@ -7,7 +8,7 @@ export async function uploadRecordFile(token: string, table: 'products' | 'expen
   body.set('record_id', recordId)
   body.set('file', new File([blob], 'image.jpg', { type: blob.type || 'image/jpeg' }))
   const headers = new Headers({ Accept: 'application/json', Authorization: `Bearer ${token}` })
-  const response = await fetch('/api/files', { method: 'POST', headers, body })
+  const response = await fetch(apiUrl('/api/files'), { method: 'POST', headers, body })
   const result = (await response.json().catch(() => ({}))) as { path?: string; message?: string }
   if (!response.ok || !result.path) throw new Error(result.message ?? 'The image could not be saved.')
   return result.path

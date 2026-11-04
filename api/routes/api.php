@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BrandController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\DeviceController;
 use App\Http\Controllers\Api\FileController;
@@ -19,6 +20,7 @@ Route::get('/health', function () {
 });
 
 Route::post('/auth/login', [AuthController::class, 'login']);
+Route::get('/brand', [BrandController::class, 'show']);
 
 Route::middleware(['auth:sanctum', 'account.state'])->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
