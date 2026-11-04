@@ -1,19 +1,20 @@
-import { copyFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vitest/config'
+import { publishSqliteWasm } from './vite/sqliteWasm.ts'
 
 function stableSqliteWasm() {
   return {
     name: 'stable-sqlite-wasm',
     apply: 'build' as const,
-    closeBundle() {
-      const dir = join(process.cwd(), 'dist', 'assets')
-      const hashed = readdirSync(dir).find((name) => /^sqlite3-.*\.wasm$/.test(name))
-      if (!hashed) return
-      copyFileSync(join(dir, hashed), join(dir, 'sqlite3.wasm'))
+    closeBundle: {
+      order: 'pre' as const,
+      sequential: true,
+      handler() {
+        publishSqliteWasm(join(process.cwd(), 'dist'))
+      },
     },
   }
 }
@@ -43,7 +44,8 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,wasm}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        navigateFallbackDenylist: [/\.wasm$/],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
     }),
